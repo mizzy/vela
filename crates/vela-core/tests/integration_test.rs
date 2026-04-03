@@ -50,7 +50,7 @@ fn call_answer(wasm: &[u8]) -> u32 {
 #[test]
 fn optimized_component_runs_in_wasmtime() {
     let original = build_test_component_wat();
-    let optimized = optimize(&original, &OptimizeConfig { dce: true }).expect("optimize should succeed");
+    let optimized = optimize(&original, &OptimizeConfig { dce: true, dfe: true }).expect("optimize should succeed");
 
     assert!(
         optimized.len() < original.len(),
@@ -65,6 +65,66 @@ fn optimized_component_runs_in_wasmtime() {
 #[test]
 fn pass_through_component_runs_in_wasmtime() {
     let original = build_test_component_wat();
-    let result = optimize(&original, &OptimizeConfig { dce: false }).expect("pass-through should succeed");
+    let result = optimize(&original, &OptimizeConfig { dce: false, dfe: false }).expect("pass-through should succeed");
     assert_eq!(call_answer(&result), 42);
+}
+
+fn build_component_with_duplicates_wat() -> Vec<u8> {
+    wat::parse_str(
+        r#"
+        (component
+            (core module $m
+                (func $get_a (export "get_a") (result i32)
+                    i32.const 42
+                )
+                (func $get_b (export "get_b") (result i32)
+                    i32.const 42
+                )
+                (func $dead (result i32)
+                    i32.const 99
+                )
+            )
+            (core instance $i (instantiate $m))
+            (func (export "get-a") (result u32)
+                (canon lift (core func $i "get_a"))
+            )
+            (func (export "get-b") (result u32)
+                (canon lift (core func $i "get_b"))
+            )
+        )
+    "#,
+    )
+    .expect("WAT should parse")
+}
+
+fn call_func(wasm: &[u8], name: &str) -> u32 {
+    let mut config = wasmtime::Config::new();
+    config.wasm_component_model(true);
+    let engine = wasmtime::Engine::new(&config).expect("engine");
+    let mut store = wasmtime::Store::new(&engine, ());
+
+    let component = wasmtime::component::Component::new(&engine, wasm).expect("should compile");
+    let linker: wasmtime::component::Linker<()> = wasmtime::component::Linker::new(&engine);
+    let instance = linker
+        .instantiate(&mut store, &component)
+        .expect("should instantiate");
+
+    let func = instance
+        .get_typed_func::<(), (u32,)>(&mut store, name)
+        .expect("should find export");
+    let (result,) = func.call(&mut store, ()).expect("should call");
+    result
+}
+
+#[test]
+fn dfe_merges_duplicates_and_runs_correctly() {
+    let original = build_component_with_duplicates_wat();
+    let optimized = optimize(&original, &OptimizeConfig { dce: true, dfe: true })
+        .expect("optimize should succeed");
+
+    assert!(optimized.len() < original.len());
+
+    // Both exports should still work correctly
+    assert_eq!(call_func(&optimized, "get-a"), 42);
+    assert_eq!(call_func(&optimized, "get-b"), 42);
 }
