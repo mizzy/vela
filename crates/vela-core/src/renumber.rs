@@ -15,13 +15,11 @@ pub fn build_index_map(
     redirects: &HashMap<u32, u32>,
     removals: &HashSet<u32>,
 ) -> Vec<u32> {
-    // Phase 1: apply redirects
     let mut map: Vec<u32> = (0..num_functions).collect();
     for (&from, &to) in redirects {
         map[from as usize] = to;
     }
 
-    // Phase 2: compact — compute new indices for non-removed functions
     let mut compact_map: Vec<u32> = vec![0; num_functions as usize];
     let mut next_index: u32 = 0;
     for i in 0..num_functions {
@@ -31,7 +29,6 @@ pub fn build_index_map(
         }
     }
 
-    // Combine: for each old index, follow redirect then compact
     for i in 0..num_functions as usize {
         map[i] = compact_map[map[i] as usize];
     }

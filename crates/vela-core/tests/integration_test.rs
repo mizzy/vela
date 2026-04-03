@@ -28,7 +28,7 @@ fn build_test_component_wat() -> Vec<u8> {
     .expect("WAT should parse")
 }
 
-fn call_answer(wasm: &[u8]) -> u32 {
+fn call_func(wasm: &[u8], name: &str) -> u32 {
     let mut config = wasmtime::Config::new();
     config.wasm_component_model(true);
     let engine = wasmtime::Engine::new(&config).expect("engine");
@@ -41,8 +41,8 @@ fn call_answer(wasm: &[u8]) -> u32 {
         .expect("should instantiate");
 
     let func = instance
-        .get_typed_func::<(), (u32,)>(&mut store, "answer")
-        .expect("should find 'answer' export");
+        .get_typed_func::<(), (u32,)>(&mut store, name)
+        .expect("should find export");
     let (result,) = func.call(&mut store, ()).expect("should call");
     result
 }
@@ -59,14 +59,14 @@ fn optimized_component_runs_in_wasmtime() {
         original.len()
     );
 
-    assert_eq!(call_answer(&optimized), 42);
+    assert_eq!(call_func(&optimized, "answer"), 42);
 }
 
 #[test]
 fn pass_through_component_runs_in_wasmtime() {
     let original = build_test_component_wat();
     let result = optimize(&original, &OptimizeConfig { dce: false, dfe: false }).expect("pass-through should succeed");
-    assert_eq!(call_answer(&result), 42);
+    assert_eq!(call_func(&result, "answer"), 42);
 }
 
 fn build_component_with_duplicates_wat() -> Vec<u8> {
@@ -95,25 +95,6 @@ fn build_component_with_duplicates_wat() -> Vec<u8> {
     "#,
     )
     .expect("WAT should parse")
-}
-
-fn call_func(wasm: &[u8], name: &str) -> u32 {
-    let mut config = wasmtime::Config::new();
-    config.wasm_component_model(true);
-    let engine = wasmtime::Engine::new(&config).expect("engine");
-    let mut store = wasmtime::Store::new(&engine, ());
-
-    let component = wasmtime::component::Component::new(&engine, wasm).expect("should compile");
-    let linker: wasmtime::component::Linker<()> = wasmtime::component::Linker::new(&engine);
-    let instance = linker
-        .instantiate(&mut store, &component)
-        .expect("should instantiate");
-
-    let func = instance
-        .get_typed_func::<(), (u32,)>(&mut store, name)
-        .expect("should find export");
-    let (result,) = func.call(&mut store, ()).expect("should call");
-    result
 }
 
 #[test]

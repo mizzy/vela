@@ -18,7 +18,8 @@ pub fn find_duplicates(
     let parser = wasmparser::Parser::new(0);
     let mut num_imports: u32 = 0;
     let mut type_indices: Vec<u32> = Vec::new();
-    let mut body_bytes: Vec<Vec<u8>> = Vec::new();
+    // Store byte ranges into module_bytes instead of cloning body bytes
+    let mut body_ranges: Vec<std::ops::Range<usize>> = Vec::new();
 
     for payload in parser.parse_all(module_bytes) {
         let payload = payload?;
@@ -37,24 +38,24 @@ pub fn find_duplicates(
                 }
             }
             wasmparser::Payload::CodeSectionEntry(body) => {
-                let range = body.range();
-                body_bytes.push(module_bytes[range.start..range.end].to_vec());
+                body_ranges.push(body.range());
             }
             _ => {}
         }
     }
 
-    // Group reachable defined functions by (type_index, body_hash)
-    let mut groups: HashMap<(u32, u64), (u32, Vec<u8>)> = HashMap::new();
+    // key → (representative func_index, body range for byte comparison on hash collision)
+    let mut groups: HashMap<(u32, u64), (u32, std::ops::Range<usize>)> = HashMap::new();
     let mut redirects = HashMap::new();
     let mut removals = HashSet::new();
 
-    for (code_idx, bytes) in body_bytes.iter().enumerate() {
+    for (code_idx, range) in body_ranges.iter().enumerate() {
         let func_idx = num_imports + code_idx as u32;
         if !reachable.contains(&func_idx) {
             continue;
         }
 
+        let bytes = &module_bytes[range.start..range.end];
         let type_idx = type_indices[code_idx];
         let mut hasher = std::hash::DefaultHasher::new();
         bytes.hash(&mut hasher);
@@ -62,18 +63,18 @@ pub fn find_duplicates(
         let key = (type_idx, hash);
 
         match groups.get(&key) {
-            Some((representative, rep_bytes)) if rep_bytes == bytes => {
+            Some((representative, rep_range))
+                if module_bytes[rep_range.start..rep_range.end] == *bytes =>
+            {
                 redirects.insert(func_idx, *representative);
                 removals.insert(func_idx);
             }
             Some(_) => {
-                // Hash collision with different body — this function is treated as
-                // unique even though it might be a duplicate of a different group.
-                // This is a known limitation: with DefaultHasher the probability is
-                // negligible, and correctness is not affected (we just miss a dedup).
+                // Hash collision with different body — treated as unique.
+                // Known limitation: negligible probability with DefaultHasher.
             }
             None => {
-                groups.insert(key, (func_idx, bytes.clone()));
+                groups.insert(key, (func_idx, range.clone()));
             }
         }
     }
