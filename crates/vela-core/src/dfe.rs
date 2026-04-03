@@ -67,7 +67,10 @@ pub fn find_duplicates(
                 removals.insert(func_idx);
             }
             Some(_) => {
-                // Hash collision but different body — treat as unique
+                // Hash collision with different body — this function is treated as
+                // unique even though it might be a duplicate of a different group.
+                // This is a known limitation: with DefaultHasher the probability is
+                // negligible, and correctness is not affected (we just miss a dedup).
             }
             None => {
                 groups.insert(key, (func_idx, bytes.clone()));

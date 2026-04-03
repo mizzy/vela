@@ -52,7 +52,7 @@ impl Reencode for FunctionRenumberer {
     type Error = Infallible;
 
     fn function_index(&mut self, func: u32) -> Result<u32, Error<Self::Error>> {
-        Ok(self.index_map.get(func as usize).copied().unwrap_or(func))
+        Ok(self.index_map[func as usize])
     }
 }
 
@@ -64,6 +64,10 @@ impl Reencode for FunctionRenumberer {
 /// sections are re-encoded through `FunctionRenumberer`, which transparently
 /// rewrites every function index reference (call instructions, exports,
 /// element segments, ref.func, etc.).
+///
+/// Note: re-encoding may produce slightly different (sometimes larger) LEB128
+/// encodings than the original. When very few functions are removed, this
+/// overhead can exceed the savings. This is expected and not a bug.
 pub fn rebuild_module(
     module_bytes: &[u8],
     index_map: &[u32],

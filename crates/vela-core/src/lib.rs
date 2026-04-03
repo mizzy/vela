@@ -34,6 +34,10 @@ pub fn optimize(wasm: &[u8], config: &OptimizeConfig) -> Result<Vec<u8>, VelaErr
 }
 
 fn optimize_module(module_bytes: &[u8], config: &OptimizeConfig) -> Result<Vec<u8>, VelaError> {
+    if !config.dce && !config.dfe {
+        return Ok(module_bytes.to_vec());
+    }
+
     let graph = callgraph::CallGraph::from_module(module_bytes)?;
     let roots = dce::find_roots(module_bytes, &graph)?;
     let reachable = dce::find_reachable(&roots, &graph);
