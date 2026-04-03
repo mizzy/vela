@@ -109,3 +109,46 @@ fn dfe_merges_duplicates_and_runs_correctly() {
     assert_eq!(call_func(&optimized, "get-a"), 42);
     assert_eq!(call_func(&optimized, "get-b"), 42);
 }
+
+fn build_component_with_unused_global_wat() -> Vec<u8> {
+    wat::parse_str(
+        r#"
+        (component
+            (core module $m
+                (global $used (mut i32) (i32.const 0))
+                (global $unused (mut i32) (i32.const 999))
+                (func $get (export "get") (result i32)
+                    global.get $used
+                )
+                (func $set (export "set") (param i32)
+                    local.get 0
+                    global.set $used
+                )
+            )
+            (core instance $i (instantiate $m))
+            (func (export "get") (result u32)
+                (canon lift (core func $i "get"))
+            )
+            (func (export "set") (param "x" u32)
+                (canon lift (core func $i "set"))
+            )
+        )
+    "#,
+    )
+    .expect("WAT should parse")
+}
+
+#[test]
+fn rume_removes_unused_global_and_runs() {
+    let original = build_component_with_unused_global_wat();
+    let optimized = optimize(
+        &original,
+        &OptimizeConfig { dce: true, dfe: true, rume: true },
+    )
+    .expect("optimize should succeed");
+
+    assert!(optimized.len() < original.len());
+
+    // Verify the optimized component still works
+    assert_eq!(call_func(&optimized, "get"), 0);
+}
