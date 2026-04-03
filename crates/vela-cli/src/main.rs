@@ -89,17 +89,19 @@ fn print_info(wasm: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let mut module_count = 0;
     let mut total_functions = 0u32;
     let mut total_imports = 0u32;
+    let mut printed_header = false;
 
     for payload in parser.parse_all(wasm) {
         let payload = payload?;
         match payload {
-            Payload::Version { encoding, .. } => {
+            Payload::Version { encoding, .. } if !printed_header => {
                 let kind = match encoding {
                     Encoding::Component => "Component",
                     Encoding::Module => "Module",
                 };
                 println!("Type: {}", kind);
                 println!("Size: {}", format_size(wasm.len()));
+                printed_header = true;
             }
             Payload::ModuleSection { .. } => {
                 module_count += 1;
