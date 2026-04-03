@@ -10,3 +10,4 @@ path = "src/main.rs"
 [dependencies]
 vela-core = { path = "../vela-core" }
 clap = { version = "4", features = ["derive"] }
+wasmparser = "0.246"
