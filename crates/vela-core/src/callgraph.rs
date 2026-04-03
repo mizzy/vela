@@ -47,6 +47,16 @@ impl CallGraph {
                             wasmparser::Operator::ReturnCall { function_index } => {
                                 callees.insert(function_index);
                             }
+                            // Track ref.func as an edge — the referenced function
+                            // could be called via call_ref or placed in a table
+                            wasmparser::Operator::RefFunc { function_index } => {
+                                callees.insert(function_index);
+                            }
+                            // Note: call_indirect targets are resolved at runtime via
+                            // table lookup. We handle this conservatively by marking all
+                            // elem-section functions as roots in find_roots(). Functions
+                            // placed in tables via host code or table.set at runtime are
+                            // not tracked — this is a known limitation.
                             _ => {}
                         }
                     }

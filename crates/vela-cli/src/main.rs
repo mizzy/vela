@@ -47,21 +47,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::fs::write(&output, &optimized)?;
 
             let output_size = optimized.len();
-            let reduction = input_size - output_size;
+            let reduction = input_size as i64 - output_size as i64;
             let pct = if input_size > 0 {
                 (reduction as f64 / input_size as f64) * 100.0
             } else {
                 0.0
             };
 
-            eprintln!(
-                "{} -> {} ({} reduced, {:.1}%) in {:.2}s",
-                format_size(input_size),
-                format_size(output_size),
-                format_size(reduction),
-                pct,
-                elapsed.as_secs_f64(),
-            );
+            if reduction >= 0 {
+                eprintln!(
+                    "{} -> {} ({} reduced, {:.1}%) in {:.2}s",
+                    format_size(input_size),
+                    format_size(output_size),
+                    format_size(reduction as usize),
+                    pct,
+                    elapsed.as_secs_f64(),
+                );
+            } else {
+                eprintln!(
+                    "{} -> {} ({} increase) in {:.2}s",
+                    format_size(input_size),
+                    format_size(output_size),
+                    format_size((-reduction) as usize),
+                    elapsed.as_secs_f64(),
+                );
+            }
         }
         Commands::Info { input } => {
             let wasm = std::fs::read(&input)?;
@@ -88,8 +98,8 @@ fn print_info(wasm: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
                     Encoding::Component => "Component",
                     Encoding::Module => "Module",
                 };
-                eprintln!("Type: {}", kind);
-                eprintln!("Size: {}", format_size(wasm.len()));
+                println!("Type: {}", kind);
+                println!("Size: {}", format_size(wasm.len()));
             }
             Payload::ModuleSection { .. } => {
                 module_count += 1;
@@ -109,8 +119,8 @@ fn print_info(wasm: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    eprintln!("Core modules: {}", module_count);
-    eprintln!("Functions: {} ({} imported)", total_functions + total_imports, total_imports);
+    println!("Core modules: {}", module_count);
+    println!("Functions: {} ({} imported)", total_functions + total_imports, total_imports);
 
     Ok(())
 }
