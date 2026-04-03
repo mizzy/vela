@@ -36,47 +36,101 @@ pub fn build_index_map(
     map
 }
 
-/// A re-encoder that remaps function indices according to a precomputed map.
-///
-/// All other index spaces (types, globals, etc.) are passed through unchanged
-/// via the default `Reencode` implementations (which delegate to `RoundtripReencoder`
-/// identity behavior).
-pub struct FunctionRenumberer {
-    pub index_map: Vec<u32>,
+/// Sets of indices to remove from each index space.
+pub struct Removals {
+    pub functions: HashSet<u32>,
+    pub tables: HashSet<u32>,
+    pub memories: HashSet<u32>,
+    pub globals: HashSet<u32>,
 }
 
-impl Reencode for FunctionRenumberer {
-    type Error = Infallible;
+impl Removals {
+    pub fn functions_only(functions: HashSet<u32>) -> Self {
+        Self {
+            functions,
+            tables: HashSet::new(),
+            memories: HashSet::new(),
+            globals: HashSet::new(),
+        }
+    }
 
-    fn function_index(&mut self, func: u32) -> Result<u32, Error<Self::Error>> {
-        Ok(self.index_map[func as usize])
+    pub fn is_empty(&self) -> bool {
+        self.functions.is_empty()
+            && self.tables.is_empty()
+            && self.memories.is_empty()
+            && self.globals.is_empty()
     }
 }
 
-/// Re-encode a core WASM module, removing functions listed in `removals` and
-/// remapping all function index references according to `index_map`.
+/// A re-encoder that remaps indices across all index spaces according to
+/// precomputed maps.
+pub struct ModuleRenumberer {
+    pub function_map: Vec<u32>,
+    pub table_map: Vec<u32>,
+    pub memory_map: Vec<u32>,
+    pub global_map: Vec<u32>,
+}
+
+impl ModuleRenumberer {
+    pub fn function_only(function_map: Vec<u32>) -> Self {
+        Self {
+            function_map,
+            table_map: Vec::new(),
+            memory_map: Vec::new(),
+            global_map: Vec::new(),
+        }
+    }
+}
+
+impl Reencode for ModuleRenumberer {
+    type Error = Infallible;
+
+    fn function_index(&mut self, func: u32) -> Result<u32, Error<Self::Error>> {
+        Ok(self.function_map[func as usize])
+    }
+
+    fn table_index(&mut self, table: u32) -> Result<u32, Error<Self::Error>> {
+        if self.table_map.is_empty() {
+            Ok(table)
+        } else {
+            Ok(self.table_map[table as usize])
+        }
+    }
+
+    fn memory_index(&mut self, memory: u32) -> Result<u32, Error<Self::Error>> {
+        if self.memory_map.is_empty() {
+            Ok(memory)
+        } else {
+            Ok(self.memory_map[memory as usize])
+        }
+    }
+
+    fn global_index(&mut self, global: u32) -> Result<u32, Error<Self::Error>> {
+        if self.global_map.is_empty() {
+            Ok(global)
+        } else {
+            Ok(self.global_map[global as usize])
+        }
+    }
+}
+
+/// Re-encode a core WASM module, removing entries listed in `removals` and
+/// remapping all index references according to `reencoder`.
 ///
-/// The function section and code section are handled specially: entries
-/// corresponding to removed function indices are skipped entirely. All other
-/// sections are re-encoded through `FunctionRenumberer`, which transparently
-/// rewrites every function index reference (call instructions, exports,
-/// element segments, ref.func, etc.).
-///
-/// Note: re-encoding may produce slightly different (sometimes larger) LEB128
-/// encodings than the original. When very few functions are removed, this
-/// overhead can exceed the savings. This is expected and not a bug.
+/// The function/code sections skip entries for removed function indices.
+/// The import section skips imports whose corresponding index is in removals.
+/// The table, memory, and global sections skip removed entries.
+/// All other sections are re-encoded through `ModuleRenumberer`, which
+/// transparently rewrites every index reference.
 pub fn rebuild_module(
     module_bytes: &[u8],
-    index_map: &[u32],
-    removals: &HashSet<u32>,
-    num_imports: u32,
+    reencoder: &mut ModuleRenumberer,
+    removals: &Removals,
+    num_imports: &crate::rume::ModuleCounts,
 ) -> Result<Vec<u8>, VelaError> {
     let enc_err = |e: Error<Infallible>| VelaError::InvalidWasm(format!("{e:?}"));
     let parser = wasmparser::Parser::new(0);
     let mut module = wasm_encoder::Module::new();
-    let mut reencoder = FunctionRenumberer {
-        index_map: index_map.to_vec(),
-    };
 
     for payload in parser.parse_all(module_bytes) {
         let payload = payload?;
@@ -85,8 +139,8 @@ pub fn rebuild_module(
             wasmparser::Payload::FunctionSection(reader) => {
                 let mut sec = wasm_encoder::FunctionSection::new();
                 for (i, type_idx) in reader.into_iter().enumerate() {
-                    let func_idx = num_imports + i as u32;
-                    if !removals.contains(&func_idx) {
+                    let func_idx = num_imports.num_func_imports + i as u32;
+                    if !removals.functions.contains(&func_idx) {
                         sec.function(reencoder.type_index(type_idx?).map_err(&enc_err)?);
                     }
                 }
@@ -100,8 +154,8 @@ pub fn rebuild_module(
                 let mut code_section = wasm_encoder::CodeSection::new();
                 for (code_index, func_result) in code_reader.into_iter().enumerate() {
                     let func_body = func_result?;
-                    let func_idx = num_imports + code_index as u32;
-                    if !removals.contains(&func_idx) {
+                    let func_idx = num_imports.num_func_imports + code_index as u32;
+                    if !removals.functions.contains(&func_idx) {
                         reencoder
                             .parse_function_body(&mut code_section, func_body)
                             .map_err(&enc_err)?;
@@ -117,38 +171,82 @@ pub fn rebuild_module(
                     .map_err(&enc_err)?;
                 module.section(&sec);
             }
-            wasmparser::Payload::ImportSection(s) => {
+            wasmparser::Payload::ImportSection(reader) => {
                 let mut sec = wasm_encoder::ImportSection::new();
-                reencoder
-                    .parse_import_section(&mut sec, s)
-                    .map_err(&enc_err)?;
+                let mut func_idx: u32 = 0;
+                let mut table_idx: u32 = 0;
+                let mut memory_idx: u32 = 0;
+                let mut global_idx: u32 = 0;
+                for import in reader.into_imports() {
+                    let import = import?;
+                    let should_skip = match import.ty {
+                        wasmparser::TypeRef::Func(_) => {
+                            let s = removals.functions.contains(&func_idx);
+                            func_idx += 1;
+                            s
+                        }
+                        wasmparser::TypeRef::Table(_) => {
+                            let s = removals.tables.contains(&table_idx);
+                            table_idx += 1;
+                            s
+                        }
+                        wasmparser::TypeRef::Memory(_) => {
+                            let s = removals.memories.contains(&memory_idx);
+                            memory_idx += 1;
+                            s
+                        }
+                        wasmparser::TypeRef::Global(_) => {
+                            let s = removals.globals.contains(&global_idx);
+                            global_idx += 1;
+                            s
+                        }
+                        _ => false,
+                    };
+                    if !should_skip {
+                        reencoder.parse_import(&mut sec, import).map_err(&enc_err)?;
+                    }
+                }
                 module.section(&sec);
             }
-            wasmparser::Payload::TableSection(s) => {
+            wasmparser::Payload::TableSection(reader) => {
                 let mut sec = wasm_encoder::TableSection::new();
-                reencoder
-                    .parse_table_section(&mut sec, s)
-                    .map_err(&enc_err)?;
+                for (i, table) in reader.into_iter().enumerate() {
+                    let idx = num_imports.num_table_imports + i as u32;
+                    if !removals.tables.contains(&idx) {
+                        reencoder
+                            .parse_table(&mut sec, table?)
+                            .map_err(&enc_err)?;
+                    }
+                }
                 module.section(&sec);
             }
-            wasmparser::Payload::MemorySection(s) => {
+            wasmparser::Payload::MemorySection(reader) => {
                 let mut sec = wasm_encoder::MemorySection::new();
-                reencoder
-                    .parse_memory_section(&mut sec, s)
-                    .map_err(&enc_err)?;
+                for (i, memory) in reader.into_iter().enumerate() {
+                    let idx = num_imports.num_memory_imports + i as u32;
+                    if !removals.memories.contains(&idx) {
+                        let mem = reencoder.memory_type(memory?).map_err(&enc_err)?;
+                        sec.memory(mem);
+                    }
+                }
+                module.section(&sec);
+            }
+            wasmparser::Payload::GlobalSection(reader) => {
+                let mut sec = wasm_encoder::GlobalSection::new();
+                for (i, global) in reader.into_iter().enumerate() {
+                    let idx = num_imports.num_global_imports + i as u32;
+                    if !removals.globals.contains(&idx) {
+                        reencoder
+                            .parse_global(&mut sec, global?)
+                            .map_err(&enc_err)?;
+                    }
+                }
                 module.section(&sec);
             }
             wasmparser::Payload::TagSection(s) => {
                 let mut sec = wasm_encoder::TagSection::new();
                 reencoder
                     .parse_tag_section(&mut sec, s)
-                    .map_err(&enc_err)?;
-                module.section(&sec);
-            }
-            wasmparser::Payload::GlobalSection(s) => {
-                let mut sec = wasm_encoder::GlobalSection::new();
-                reencoder
-                    .parse_global_section(&mut sec, s)
                     .map_err(&enc_err)?;
                 module.section(&sec);
             }
@@ -286,9 +384,21 @@ mod tests {
         let wasm = module.finish();
 
         // Remove func 2
-        let removals = HashSet::from([2u32]);
-        let index_map = build_index_map(3, &HashMap::new(), &removals);
-        let rebuilt = rebuild_module(&wasm, &index_map, &removals, 0).expect("rebuild should succeed");
+        let removals = Removals::functions_only(HashSet::from([2u32]));
+        let index_map = build_index_map(3, &HashMap::new(), &removals.functions);
+        let mut reencoder = ModuleRenumberer::function_only(index_map);
+        let counts = crate::rume::ModuleCounts {
+            num_functions: 3,
+            num_tables: 0,
+            num_memories: 0,
+            num_globals: 0,
+            num_func_imports: 0,
+            num_table_imports: 0,
+            num_memory_imports: 0,
+            num_global_imports: 0,
+        };
+        let rebuilt =
+            rebuild_module(&wasm, &mut reencoder, &removals, &counts).expect("should succeed");
 
         // Validate the rebuilt module
         wasmparser::Validator::new()
@@ -367,9 +477,21 @@ mod tests {
 
         // Redirect func 2 -> func 1, remove func 2
         let redirects = HashMap::from([(2u32, 1u32)]);
-        let removals = HashSet::from([2u32]);
-        let index_map = build_index_map(4, &redirects, &removals);
-        let rebuilt = rebuild_module(&wasm, &index_map, &removals, 0).expect("rebuild should succeed");
+        let removals = Removals::functions_only(HashSet::from([2u32]));
+        let index_map = build_index_map(4, &redirects, &removals.functions);
+        let mut reencoder = ModuleRenumberer::function_only(index_map);
+        let counts = crate::rume::ModuleCounts {
+            num_functions: 4,
+            num_tables: 0,
+            num_memories: 0,
+            num_globals: 0,
+            num_func_imports: 0,
+            num_table_imports: 0,
+            num_memory_imports: 0,
+            num_global_imports: 0,
+        };
+        let rebuilt =
+            rebuild_module(&wasm, &mut reencoder, &removals, &counts).expect("should succeed");
 
         // Validate the rebuilt module
         wasmparser::Validator::new()
@@ -391,5 +513,112 @@ mod tests {
             graph.edges.get(&2).map_or(false, |c| c.contains(&1)),
             "func 2 (was func 3) should call func 1 (redirected from func 2)"
         );
+    }
+
+    #[test]
+    fn rebuild_removes_unused_global() {
+        use wasm_encoder::*;
+
+        // Build module with:
+        // - global 0: i32, used by func 0 via GlobalGet
+        // - global 1: i32, unused
+        // - func 0: exported, reads global 0
+        let mut module = Module::new();
+
+        let mut types = TypeSection::new();
+        types.ty().function(vec![], vec![ValType::I32]);
+        module.section(&types);
+
+        let mut functions = FunctionSection::new();
+        functions.function(0); // func 0: () -> i32
+        module.section(&functions);
+
+        let mut globals = GlobalSection::new();
+        globals.global(
+            wasm_encoder::GlobalType {
+                val_type: ValType::I32,
+                mutable: false,
+                shared: false,
+            },
+            &ConstExpr::i32_const(42),
+        );
+        globals.global(
+            wasm_encoder::GlobalType {
+                val_type: ValType::I32,
+                mutable: false,
+                shared: false,
+            },
+            &ConstExpr::i32_const(99),
+        );
+        module.section(&globals);
+
+        let mut exports = ExportSection::new();
+        exports.export("get_val", ExportKind::Func, 0);
+        module.section(&exports);
+
+        let mut codes = CodeSection::new();
+        let mut f0 = Function::new(vec![]);
+        f0.instruction(&Instruction::GlobalGet(0));
+        f0.instruction(&Instruction::End);
+        codes.function(&f0);
+
+        module.section(&codes);
+        let wasm = module.finish();
+
+        // Remove global 1
+        let removals = Removals {
+            functions: HashSet::new(),
+            tables: HashSet::new(),
+            memories: HashSet::new(),
+            globals: HashSet::from([1u32]),
+        };
+
+        // Build global index map: global 0 -> 0, global 1 removed
+        let global_map = vec![0u32, 0u32]; // global 1 maps to 0 (doesn't matter, it's removed)
+        let function_map = vec![0u32]; // single function, identity
+
+        let mut reencoder = ModuleRenumberer {
+            function_map,
+            table_map: Vec::new(),
+            memory_map: Vec::new(),
+            global_map,
+        };
+
+        let counts = crate::rume::ModuleCounts {
+            num_functions: 1,
+            num_tables: 0,
+            num_memories: 0,
+            num_globals: 2,
+            num_func_imports: 0,
+            num_table_imports: 0,
+            num_memory_imports: 0,
+            num_global_imports: 0,
+        };
+
+        let rebuilt =
+            rebuild_module(&wasm, &mut reencoder, &removals, &counts).expect("should succeed");
+
+        // Validate the rebuilt module
+        wasmparser::Validator::new()
+            .validate_all(&rebuilt)
+            .expect("rebuilt module should be valid");
+
+        // Should be smaller (one fewer global)
+        assert!(
+            rebuilt.len() < wasm.len(),
+            "rebuilt ({}) should be smaller than original ({})",
+            rebuilt.len(),
+            wasm.len()
+        );
+
+        // Verify the module still has one global by parsing
+        let parser = wasmparser::Parser::new(0);
+        let mut global_count = 0u32;
+        for payload in parser.parse_all(&rebuilt) {
+            if let wasmparser::Payload::GlobalSection(reader) = payload.unwrap() {
+                global_count = reader.count();
+            }
+        }
+        assert_eq!(global_count, 1, "should have 1 global after removal");
     }
 }

@@ -62,8 +62,20 @@ fn optimize_module(module_bytes: &[u8], config: &OptimizeConfig) -> Result<Vec<u
         return Ok(module_bytes.to_vec());
     }
 
-    let index_map = renumber::build_index_map(graph.num_functions, &redirects, &removals);
-    renumber::rebuild_module(module_bytes, &index_map, &removals, graph.num_imports)
+    let removals_set = renumber::Removals::functions_only(removals);
+    let index_map = renumber::build_index_map(graph.num_functions, &redirects, &removals_set.functions);
+    let mut reencoder = renumber::ModuleRenumberer::function_only(index_map);
+    let counts = crate::rume::ModuleCounts {
+        num_functions: graph.num_functions,
+        num_tables: 0,
+        num_memories: 0,
+        num_globals: 0,
+        num_func_imports: graph.num_imports,
+        num_table_imports: 0,
+        num_memory_imports: 0,
+        num_global_imports: 0,
+    };
+    renumber::rebuild_module(module_bytes, &mut reencoder, &removals_set, &counts)
 }
 
 #[cfg(test)]
