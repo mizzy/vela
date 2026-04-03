@@ -10,27 +10,55 @@ pub(crate) mod testutil;
 
 pub use error::VelaError;
 
+use std::collections::{HashMap, HashSet};
+
 /// Configuration for optimization passes.
 pub struct OptimizeConfig {
     /// Enable Dead Code Elimination.
     pub dce: bool,
+    /// Enable Duplicate Function Elimination.
+    pub dfe: bool,
 }
 
 impl Default for OptimizeConfig {
     fn default() -> Self {
-        Self { dce: true }
+        Self { dce: true, dfe: true }
     }
 }
 
 /// Optimize a Component Model WASM binary.
 pub fn optimize(wasm: &[u8], config: &OptimizeConfig) -> Result<Vec<u8>, VelaError> {
     component::process_component(wasm, |module_bytes| {
-        if config.dce {
-            dce::eliminate_dead_functions(module_bytes)
-        } else {
-            Ok(module_bytes.to_vec())
-        }
+        optimize_module(module_bytes, config)
     })
+}
+
+fn optimize_module(module_bytes: &[u8], config: &OptimizeConfig) -> Result<Vec<u8>, VelaError> {
+    let graph = callgraph::CallGraph::from_module(module_bytes)?;
+    let roots = dce::find_roots(module_bytes, &graph)?;
+    let reachable = dce::find_reachable(&roots, &graph);
+
+    let mut removals: HashSet<u32> = if config.dce {
+        (0..graph.num_functions)
+            .filter(|i| !reachable.contains(i))
+            .collect()
+    } else {
+        HashSet::new()
+    };
+
+    let mut redirects: HashMap<u32, u32> = HashMap::new();
+    if config.dfe {
+        let dfe_result = dfe::find_duplicates(module_bytes, &reachable)?;
+        redirects = dfe_result.redirects;
+        removals.extend(dfe_result.removals);
+    }
+
+    if removals.is_empty() && redirects.is_empty() {
+        return Ok(module_bytes.to_vec());
+    }
+
+    let index_map = renumber::build_index_map(graph.num_functions, &redirects, &removals);
+    renumber::rebuild_module(module_bytes, &index_map, &removals, graph.num_imports)
 }
 
 #[cfg(test)]
@@ -92,7 +120,7 @@ mod tests {
     #[test]
     fn optimize_reduces_component_size() {
         let original = build_component_with_dead_code();
-        let config = OptimizeConfig { dce: true };
+        let config = OptimizeConfig { dce: true, dfe: true };
         let optimized = optimize(&original, &config).expect("optimize should succeed");
 
         assert!(
@@ -109,9 +137,9 @@ mod tests {
     }
 
     #[test]
-    fn optimize_with_dce_disabled_passes_through() {
+    fn optimize_with_all_disabled_passes_through() {
         let original = build_component_with_dead_code();
-        let config = OptimizeConfig { dce: false };
+        let config = OptimizeConfig { dce: false, dfe: false };
         let result = optimize(&original, &config).expect("should succeed");
 
         let parser = wasmparser::Parser::new(0);
