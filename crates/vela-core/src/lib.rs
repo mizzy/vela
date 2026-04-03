@@ -25,7 +25,7 @@ impl Default for OptimizeConfig {
 pub fn optimize(wasm: &[u8], config: &OptimizeConfig) -> Result<Vec<u8>, VelaError> {
     component::process_component(wasm, |module_bytes| {
         if config.dce {
-            dce::eliminate_dead_code(module_bytes)
+            dce::eliminate_dead_functions(module_bytes)
         } else {
             Ok(module_bytes.to_vec())
         }

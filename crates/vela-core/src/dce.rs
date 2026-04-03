@@ -1,8 +1,7 @@
 // crates/vela-core/src/dce.rs
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use crate::callgraph::CallGraph;
 use crate::error::VelaError;
-use wasm_encoder::reencode::{Reencode, RoundtripReencoder};
 
 pub fn find_roots(module_bytes: &[u8], graph: &CallGraph) -> Result<HashSet<u32>, VelaError> {
     let parser = wasmparser::Parser::new(0);
@@ -79,110 +78,26 @@ pub fn find_reachable(roots: &HashSet<u32>, graph: &CallGraph) -> HashSet<u32> {
     reachable
 }
 
-pub fn eliminate_dead_code(module_bytes: &[u8]) -> Result<Vec<u8>, VelaError> {
+/// Apply DCE: fully remove unreachable functions and renumber indices.
+pub fn eliminate_dead_functions(module_bytes: &[u8]) -> Result<Vec<u8>, VelaError> {
     let graph = CallGraph::from_module(module_bytes)?;
     let roots = find_roots(module_bytes, &graph)?;
     let reachable = find_reachable(&roots, &graph);
 
-    let enc_err = |e: wasm_encoder::reencode::Error| VelaError::InvalidWasm(format!("{e:?}"));
+    let removals: HashSet<u32> = (0..graph.num_functions)
+        .filter(|i| !reachable.contains(i))
+        .collect();
 
-    let parser = wasmparser::Parser::new(0);
-    let mut module = wasm_encoder::Module::new();
-    let mut reencoder = RoundtripReencoder;
-
-    for payload in parser.parse_all(module_bytes) {
-        let payload = payload?;
-        match payload {
-            wasmparser::Payload::Version { .. } => {}
-            wasmparser::Payload::CodeSectionStart { range, .. } => {
-                let section_bytes = &module_bytes[range.start..range.end];
-                let reader = wasmparser::BinaryReader::new(section_bytes, range.start);
-                let code_reader = wasmparser::CodeSectionReader::new(reader)?;
-
-                let mut code_section = wasm_encoder::CodeSection::new();
-                for (code_index, func_result) in code_reader.into_iter().enumerate() {
-                    let func_body = func_result?;
-                    let func_index = graph.num_imports + code_index as u32;
-
-                    if reachable.contains(&func_index) {
-                        reencoder
-                            .parse_function_body(&mut code_section, func_body)
-                            .map_err(&enc_err)?;
-                    } else {
-                        let mut f = wasm_encoder::Function::new(vec![]);
-                        f.instruction(&wasm_encoder::Instruction::Unreachable);
-                        f.instruction(&wasm_encoder::Instruction::End);
-                        code_section.function(&f);
-                    }
-                }
-                module.section(&code_section);
-            }
-            wasmparser::Payload::CodeSectionEntry(_) => {}
-            wasmparser::Payload::TypeSection(s) => {
-                let mut sec = wasm_encoder::TypeSection::new();
-                reencoder.parse_type_section(&mut sec, s).map_err(&enc_err)?;
-                module.section(&sec);
-            }
-            wasmparser::Payload::ImportSection(s) => {
-                let mut sec = wasm_encoder::ImportSection::new();
-                reencoder.parse_import_section(&mut sec, s).map_err(&enc_err)?;
-                module.section(&sec);
-            }
-            wasmparser::Payload::FunctionSection(s) => {
-                let mut sec = wasm_encoder::FunctionSection::new();
-                reencoder.parse_function_section(&mut sec, s).map_err(&enc_err)?;
-                module.section(&sec);
-            }
-            wasmparser::Payload::TableSection(s) => {
-                let mut sec = wasm_encoder::TableSection::new();
-                reencoder.parse_table_section(&mut sec, s).map_err(&enc_err)?;
-                module.section(&sec);
-            }
-            wasmparser::Payload::MemorySection(s) => {
-                let mut sec = wasm_encoder::MemorySection::new();
-                reencoder.parse_memory_section(&mut sec, s).map_err(&enc_err)?;
-                module.section(&sec);
-            }
-            wasmparser::Payload::TagSection(s) => {
-                let mut sec = wasm_encoder::TagSection::new();
-                reencoder.parse_tag_section(&mut sec, s).map_err(&enc_err)?;
-                module.section(&sec);
-            }
-            wasmparser::Payload::GlobalSection(s) => {
-                let mut sec = wasm_encoder::GlobalSection::new();
-                reencoder.parse_global_section(&mut sec, s).map_err(&enc_err)?;
-                module.section(&sec);
-            }
-            wasmparser::Payload::ExportSection(s) => {
-                let mut sec = wasm_encoder::ExportSection::new();
-                reencoder.parse_export_section(&mut sec, s).map_err(&enc_err)?;
-                module.section(&sec);
-            }
-            wasmparser::Payload::StartSection { func, .. } => {
-                module.section(&wasm_encoder::StartSection { function_index: func });
-            }
-            wasmparser::Payload::ElementSection(s) => {
-                let mut sec = wasm_encoder::ElementSection::new();
-                reencoder.parse_element_section(&mut sec, s).map_err(&enc_err)?;
-                module.section(&sec);
-            }
-            wasmparser::Payload::DataCountSection { count, .. } => {
-                module.section(&wasm_encoder::DataCountSection { count });
-            }
-            wasmparser::Payload::DataSection(s) => {
-                let mut sec = wasm_encoder::DataSection::new();
-                reencoder.parse_data_section(&mut sec, s).map_err(&enc_err)?;
-                module.section(&sec);
-            }
-            wasmparser::Payload::CustomSection(s) => {
-                reencoder.parse_custom_section(&mut module, s).map_err(&enc_err)?;
-            }
-            wasmparser::Payload::End(_) => {}
-            _ => {}
-        }
+    if removals.is_empty() {
+        return Ok(module_bytes.to_vec());
     }
 
-    Ok(module.finish())
+    let index_map = crate::renumber::build_index_map(
+        graph.num_functions,
+        &HashMap::new(),
+        &removals,
+    );
+    crate::renumber::rebuild_module(module_bytes, &index_map, &removals, graph.num_imports)
 }
 
 #[cfg(test)]
@@ -294,30 +209,21 @@ mod tests {
     }
 
     #[test]
-    fn eliminates_dead_function_body() {
+    fn eliminates_dead_functions() {
         let wasm = build_basic_module();
-        let optimized = eliminate_dead_code(&wasm).expect("should optimize");
+        let optimized = eliminate_dead_functions(&wasm).expect("should optimize");
 
-        // Optimized module should be smaller (dead func 3 body replaced with unreachable)
-        assert!(
-            optimized.len() <= wasm.len(),
-            "optimized module should not be larger than original"
-        );
-
-        // Validate the optimized module
         wasmparser::Validator::new().validate_all(&optimized).expect("optimized module should be valid");
 
-        // Verify dead func 3 has no outgoing calls in the optimized module
+        // Dead func 3 should be fully removed — only 3 functions remain
         let graph = CallGraph::from_module(&optimized).expect("should parse optimized module");
-        assert!(
-            graph.edges.get(&3).map_or(true, |callees| callees.is_empty()),
-            "dead func 3 should have no outgoing calls after DCE"
-        );
+        assert_eq!(graph.num_functions, 3, "dead function should be fully removed");
+
+        assert!(optimized.len() < wasm.len(), "optimized should be smaller");
     }
 
     #[test]
     fn live_functions_preserved_correctly() {
-        // Build a module with func 0 (exported, returns i32 42) and func 1 (dead)
         let mut module = Module::new();
 
         let mut types = TypeSection::new();
@@ -335,13 +241,11 @@ mod tests {
 
         let mut codes = CodeSection::new();
 
-        // func 0: returns i32.const 42
         let mut f0 = Function::new(vec![]);
         f0.instruction(&Instruction::I32Const(42));
         f0.instruction(&Instruction::End);
         codes.function(&f0);
 
-        // func 1: dead, returns i32.const 99
         let mut f1 = Function::new(vec![]);
         f1.instruction(&Instruction::I32Const(99));
         f1.instruction(&Instruction::End);
@@ -350,26 +254,23 @@ mod tests {
         module.section(&codes);
         let wasm = module.finish();
 
-        let optimized = eliminate_dead_code(&wasm).expect("should optimize");
+        let optimized = eliminate_dead_functions(&wasm).expect("should optimize");
 
-        // Validate
-        wasmparser::Validator::new().validate_all(&optimized).expect("optimized module should be valid");
+        wasmparser::Validator::new().validate_all(&optimized).expect("should be valid");
 
-        // Verify func 0 still contains i32.const 42
+        let graph = CallGraph::from_module(&optimized).unwrap();
+        assert_eq!(graph.num_functions, 1, "only exported function should remain");
+
         let parser = wasmparser::Parser::new(0);
-        let mut code_index = 0u32;
         let mut found_42 = false;
         for payload in parser.parse_all(&optimized) {
             if let wasmparser::Payload::CodeSectionEntry(body) = payload.unwrap() {
-                if code_index == 0 {
-                    let mut ops = body.get_operators_reader().unwrap();
-                    while !ops.eof() {
-                        if let wasmparser::Operator::I32Const { value: 42 } = ops.read().unwrap() {
-                            found_42 = true;
-                        }
+                let mut ops = body.get_operators_reader().unwrap();
+                while !ops.eof() {
+                    if let wasmparser::Operator::I32Const { value: 42 } = ops.read().unwrap() {
+                        found_42 = true;
                     }
                 }
-                code_index += 1;
             }
         }
         assert!(found_42, "func 0 should still contain i32.const 42 after DCE");
