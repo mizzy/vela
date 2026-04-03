@@ -5,6 +5,7 @@ pub mod dce;
 pub mod dfe;
 pub mod error;
 pub mod renumber;
+pub mod rume;
 #[cfg(test)]
 pub(crate) mod testutil;
 
