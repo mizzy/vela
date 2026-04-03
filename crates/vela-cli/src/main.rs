@@ -26,6 +26,10 @@ enum Commands {
         /// Disable Duplicate Function Elimination
         #[arg(long)]
         no_dfe: bool,
+
+        /// Disable Remove Unused Module Elements
+        #[arg(long)]
+        no_rume: bool,
     },
     /// Display information about a WASM Component Model binary
     Info {
@@ -38,11 +42,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Optimize { input, output, no_dce, no_dfe } => {
+        Commands::Optimize { input, output, no_dce, no_dfe, no_rume } => {
             let wasm = std::fs::read(&input)?;
             let input_size = wasm.len();
 
-            let config = vela_core::OptimizeConfig { dce: !no_dce, dfe: !no_dfe };
+            let config = vela_core::OptimizeConfig { dce: !no_dce, dfe: !no_dfe, rume: !no_rume };
 
             let start = std::time::Instant::now();
             let optimized = vela_core::optimize(&wasm, &config)?;
