@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 wasmparser = "0.246"
-wasm-encoder = "0.246"
+wasm-encoder = { version = "0.246", features = ["wasmparser"] }
 thiserror = "2"
 
 [dev-dependencies]
