@@ -1,0 +1,14 @@
+[package]
+name = "vela-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wasmparser = "0.246"
+wasm-encoder = "0.246"
+thiserror = "2"
+
+[dev-dependencies]
+wasmtime = "43"
+wasmtime-wasi = "43"
+wat = "1"

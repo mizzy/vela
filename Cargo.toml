@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/vela-core", "crates/vela-cli"]
+resolver = "2"

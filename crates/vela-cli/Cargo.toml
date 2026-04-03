@@ -1,0 +1,12 @@
+[package]
+name = "vela-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "vela"
+path = "src/main.rs"
+
+[dependencies]
+vela-core = { path = "../vela-core" }
+clap = { version = "4", features = ["derive"] }
