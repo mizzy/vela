@@ -621,4 +621,94 @@ mod tests {
         }
         assert_eq!(global_count, 1, "should have 1 global after removal");
     }
+
+    #[test]
+    fn rebuild_removes_unused_global_import() {
+        use wasm_encoder::*;
+
+        // Module with:
+        // - imported global 0 "env"."used_g" (used by func 0)
+        // - imported global 1 "env"."unused_g" (unused)
+        // - func 0: exported, reads global 0
+        let mut module = Module::new();
+
+        let mut types = TypeSection::new();
+        types.ty().function(vec![], vec![ValType::I32]);
+        module.section(&types);
+
+        let mut imports = ImportSection::new();
+        imports.import(
+            "env",
+            "used_g",
+            wasm_encoder::GlobalType { val_type: ValType::I32, mutable: false, shared: false },
+        );
+        imports.import(
+            "env",
+            "unused_g",
+            wasm_encoder::GlobalType { val_type: ValType::I32, mutable: false, shared: false },
+        );
+        module.section(&imports);
+
+        let mut functions = FunctionSection::new();
+        functions.function(0);
+        module.section(&functions);
+
+        let mut exports = ExportSection::new();
+        exports.export("get", ExportKind::Func, 0);
+        module.section(&exports);
+
+        let mut codes = CodeSection::new();
+        let mut f0 = Function::new(vec![]);
+        f0.instruction(&Instruction::GlobalGet(0));
+        f0.instruction(&Instruction::End);
+        codes.function(&f0);
+        module.section(&codes);
+
+        let wasm = module.finish();
+
+        // Remove global 1 (unused import)
+        let removals = Removals {
+            functions: HashSet::new(),
+            tables: HashSet::new(),
+            memories: HashSet::new(),
+            globals: HashSet::from([1]),
+        };
+        let func_map = build_index_map(1, &HashMap::new(), &removals.functions);
+        let global_map = build_index_map(2, &HashMap::new(), &removals.globals);
+        let mut reencoder = ModuleRenumberer {
+            function_map: func_map,
+            table_map: Vec::new(),
+            memory_map: Vec::new(),
+            global_map,
+        };
+        let counts = crate::rume::ModuleCounts {
+            num_functions: 1,
+            num_tables: 0,
+            num_memories: 0,
+            num_globals: 2,
+            num_func_imports: 0,
+            num_table_imports: 0,
+            num_memory_imports: 0,
+            num_global_imports: 2,
+        };
+        let rebuilt =
+            rebuild_module(&wasm, &mut reencoder, &removals, &counts).expect("should succeed");
+
+        wasmparser::Validator::new()
+            .validate_all(&rebuilt)
+            .expect("should be valid");
+
+        // Verify only 1 import remains
+        let parser = wasmparser::Parser::new(0);
+        let mut import_count = 0u32;
+        for payload in parser.parse_all(&rebuilt) {
+            if let wasmparser::Payload::ImportSection(reader) = payload.unwrap() {
+                for import in reader.into_imports() {
+                    import.unwrap();
+                    import_count += 1;
+                }
+            }
+        }
+        assert_eq!(import_count, 1, "should have 1 import after removing unused global import");
+    }
 }

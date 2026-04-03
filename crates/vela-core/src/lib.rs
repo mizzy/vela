@@ -65,6 +65,7 @@ fn optimize_module(module_bytes: &[u8], config: &OptimizeConfig) -> Result<Vec<u
     // RUME: analyze usage to get counts and determine unused elements
     let usage = rume::analyze_usage(module_bytes, &reachable)?;
     let counts = &usage.counts;
+    debug_assert_eq!(graph.num_functions, counts.num_functions);
 
     let mut table_removals = HashSet::new();
     let mut memory_removals = HashSet::new();

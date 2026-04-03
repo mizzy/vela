@@ -25,6 +25,11 @@ pub struct UsageInfo {
 
 /// Analyze which tables, memories, and globals are used in the module.
 /// Only scans reachable function bodies (dead code is skipped).
+///
+/// Note: atomic (threads proposal) and SIMD load/store instructions are not
+/// currently tracked. If a memory is only referenced via these instructions,
+/// it would be incorrectly marked unused. This is acceptable for the current
+/// target (Carina provider WASM) but should be addressed for general-purpose use.
 pub fn analyze_usage(
     module_bytes: &[u8],
     reachable: &HashSet<u32>,
