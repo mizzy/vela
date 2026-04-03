@@ -9,6 +9,6 @@ wasm-encoder = { version = "0.246", features = ["wasmparser"] }
 thiserror = "2"
 
 [dev-dependencies]
-wasmtime = "43"
+wasmtime = { version = "43", features = ["component-model"] }
 wasmtime-wasi = "43"
 wat = "1"
