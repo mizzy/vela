@@ -30,9 +30,6 @@ impl CallGraph {
                 }
                 wasmparser::Payload::FunctionSection(reader) => {
                     num_functions = num_imports + reader.count();
-                    for i in 0..num_functions {
-                        edges.entry(i).or_default();
-                    }
                 }
                 wasmparser::Payload::CodeSectionEntry(body) => {
                     let func_index = num_imports + code_index;
@@ -77,63 +74,8 @@ impl CallGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testutil::build_basic_module;
     use wasm_encoder::*;
-
-    fn build_basic_module() -> Vec<u8> {
-        // Build a core module with 4 functions:
-        // func 0: exported "entry", calls func 1
-        // func 1: calls func 2
-        // func 2: leaf
-        // func 3: dead, calls func 2
-        let mut module = Module::new();
-
-        // Type section: one type () -> ()
-        let mut types = TypeSection::new();
-        types.ty().function(vec![], vec![]);
-        module.section(&types);
-
-        // Function section: 4 functions all using type 0
-        let mut functions = FunctionSection::new();
-        functions.function(0);
-        functions.function(0);
-        functions.function(0);
-        functions.function(0);
-        module.section(&functions);
-
-        // Export section: export func 0 as "entry"
-        let mut exports = ExportSection::new();
-        exports.export("entry", ExportKind::Func, 0);
-        module.section(&exports);
-
-        // Code section
-        let mut codes = CodeSection::new();
-
-        // func 0: calls func 1
-        let mut f0 = Function::new(vec![]);
-        f0.instruction(&Instruction::Call(1));
-        f0.instruction(&Instruction::End);
-        codes.function(&f0);
-
-        // func 1: calls func 2
-        let mut f1 = Function::new(vec![]);
-        f1.instruction(&Instruction::Call(2));
-        f1.instruction(&Instruction::End);
-        codes.function(&f1);
-
-        // func 2: leaf
-        let mut f2 = Function::new(vec![]);
-        f2.instruction(&Instruction::End);
-        codes.function(&f2);
-
-        // func 3: dead, calls func 2
-        let mut f3 = Function::new(vec![]);
-        f3.instruction(&Instruction::Call(2));
-        f3.instruction(&Instruction::End);
-        codes.function(&f3);
-
-        module.section(&codes);
-        module.finish()
-    }
 
     fn build_module_with_imports() -> Vec<u8> {
         // Build a module with 1 import + 2 defined functions:

@@ -3,6 +3,8 @@ pub mod callgraph;
 pub mod component;
 pub mod dce;
 pub mod error;
+#[cfg(test)]
+pub(crate) mod testutil;
 
 pub use error::VelaError;
 
@@ -80,7 +82,6 @@ mod tests {
 
         module.section(&code);
 
-        // Wrap in component using ModuleSection(&module)
         let mut component = Component::new();
         component.section(&wasm_encoder::ModuleSection(&module));
         component.finish()

@@ -59,8 +59,9 @@ pub fn find_roots(module_bytes: &[u8], graph: &CallGraph) -> Result<HashSet<u32>
 }
 
 pub fn find_reachable(roots: &HashSet<u32>, graph: &CallGraph) -> HashSet<u32> {
-    let mut reachable = HashSet::new();
-    let mut stack: Vec<u32> = roots.iter().copied().collect();
+    let mut reachable = HashSet::with_capacity(graph.num_functions as usize);
+    let mut stack: Vec<u32> = Vec::with_capacity(roots.len());
+    stack.extend(roots);
 
     while let Some(func) = stack.pop() {
         if !reachable.insert(func) {
@@ -83,139 +84,101 @@ pub fn eliminate_dead_code(module_bytes: &[u8]) -> Result<Vec<u8>, VelaError> {
     let roots = find_roots(module_bytes, &graph)?;
     let reachable = find_reachable(&roots, &graph);
 
+    let enc_err = |e: wasm_encoder::reencode::Error| VelaError::InvalidWasm(format!("{e:?}"));
+
     let parser = wasmparser::Parser::new(0);
     let mut module = wasm_encoder::Module::new();
     let mut reencoder = RoundtripReencoder;
-    let orig_offset = parser.offset() as usize;
-
-    let get_original_section = |range: std::ops::Range<usize>| -> Result<&[u8], VelaError> {
-        module_bytes
-            .get(range.start - orig_offset..range.end - orig_offset)
-            .ok_or_else(|| VelaError::InvalidWasm("invalid code section range".into()))
-    };
 
     for payload in parser.parse_all(module_bytes) {
         let payload = payload?;
         match payload {
             wasmparser::Payload::Version { .. } => {}
             wasmparser::Payload::CodeSectionStart { range, .. } => {
-                let section_bytes = get_original_section(range.clone())?;
+                let section_bytes = &module_bytes[range.start..range.end];
                 let reader = wasmparser::BinaryReader::new(section_bytes, range.start);
-                let code_reader = wasmparser::CodeSectionReader::new(reader)
-                    .map_err(|e| VelaError::Wasm(e))?;
+                let code_reader = wasmparser::CodeSectionReader::new(reader)?;
 
                 let mut code_section = wasm_encoder::CodeSection::new();
-                let mut code_index: u32 = 0;
-                for func_result in code_reader {
+                for (code_index, func_result) in code_reader.into_iter().enumerate() {
                     let func_body = func_result?;
-                    let func_index = graph.num_imports + code_index;
+                    let func_index = graph.num_imports + code_index as u32;
 
                     if reachable.contains(&func_index) {
-                        // Re-encode the live function body faithfully
                         reencoder
                             .parse_function_body(&mut code_section, func_body)
-                            .map_err(|e| VelaError::InvalidWasm(format!("{e:?}")))?;
+                            .map_err(&enc_err)?;
                     } else {
-                        // Replace dead function body with unreachable + end
                         let mut f = wasm_encoder::Function::new(vec![]);
                         f.instruction(&wasm_encoder::Instruction::Unreachable);
                         f.instruction(&wasm_encoder::Instruction::End);
                         code_section.function(&f);
                     }
-                    code_index += 1;
                 }
                 module.section(&code_section);
             }
-            wasmparser::Payload::CodeSectionEntry(_) => {
-                // Handled above via CodeSectionStart
+            wasmparser::Payload::CodeSectionEntry(_) => {}
+            wasmparser::Payload::TypeSection(s) => {
+                let mut sec = wasm_encoder::TypeSection::new();
+                reencoder.parse_type_section(&mut sec, s).map_err(&enc_err)?;
+                module.section(&sec);
             }
-            wasmparser::Payload::TypeSection(section) => {
-                let mut types = wasm_encoder::TypeSection::new();
-                reencoder
-                    .parse_type_section(&mut types, section)
-                    .map_err(|e| VelaError::InvalidWasm(format!("{e:?}")))?;
-                module.section(&types);
+            wasmparser::Payload::ImportSection(s) => {
+                let mut sec = wasm_encoder::ImportSection::new();
+                reencoder.parse_import_section(&mut sec, s).map_err(&enc_err)?;
+                module.section(&sec);
             }
-            wasmparser::Payload::ImportSection(section) => {
-                let mut imports = wasm_encoder::ImportSection::new();
-                reencoder
-                    .parse_import_section(&mut imports, section)
-                    .map_err(|e| VelaError::InvalidWasm(format!("{e:?}")))?;
-                module.section(&imports);
+            wasmparser::Payload::FunctionSection(s) => {
+                let mut sec = wasm_encoder::FunctionSection::new();
+                reencoder.parse_function_section(&mut sec, s).map_err(&enc_err)?;
+                module.section(&sec);
             }
-            wasmparser::Payload::FunctionSection(section) => {
-                let mut functions = wasm_encoder::FunctionSection::new();
-                reencoder
-                    .parse_function_section(&mut functions, section)
-                    .map_err(|e| VelaError::InvalidWasm(format!("{e:?}")))?;
-                module.section(&functions);
+            wasmparser::Payload::TableSection(s) => {
+                let mut sec = wasm_encoder::TableSection::new();
+                reencoder.parse_table_section(&mut sec, s).map_err(&enc_err)?;
+                module.section(&sec);
             }
-            wasmparser::Payload::TableSection(section) => {
-                let mut tables = wasm_encoder::TableSection::new();
-                reencoder
-                    .parse_table_section(&mut tables, section)
-                    .map_err(|e| VelaError::InvalidWasm(format!("{e:?}")))?;
-                module.section(&tables);
+            wasmparser::Payload::MemorySection(s) => {
+                let mut sec = wasm_encoder::MemorySection::new();
+                reencoder.parse_memory_section(&mut sec, s).map_err(&enc_err)?;
+                module.section(&sec);
             }
-            wasmparser::Payload::MemorySection(section) => {
-                let mut memories = wasm_encoder::MemorySection::new();
-                reencoder
-                    .parse_memory_section(&mut memories, section)
-                    .map_err(|e| VelaError::InvalidWasm(format!("{e:?}")))?;
-                module.section(&memories);
+            wasmparser::Payload::TagSection(s) => {
+                let mut sec = wasm_encoder::TagSection::new();
+                reencoder.parse_tag_section(&mut sec, s).map_err(&enc_err)?;
+                module.section(&sec);
             }
-            wasmparser::Payload::TagSection(section) => {
-                let mut tags = wasm_encoder::TagSection::new();
-                reencoder
-                    .parse_tag_section(&mut tags, section)
-                    .map_err(|e| VelaError::InvalidWasm(format!("{e:?}")))?;
-                module.section(&tags);
+            wasmparser::Payload::GlobalSection(s) => {
+                let mut sec = wasm_encoder::GlobalSection::new();
+                reencoder.parse_global_section(&mut sec, s).map_err(&enc_err)?;
+                module.section(&sec);
             }
-            wasmparser::Payload::GlobalSection(section) => {
-                let mut globals = wasm_encoder::GlobalSection::new();
-                reencoder
-                    .parse_global_section(&mut globals, section)
-                    .map_err(|e| VelaError::InvalidWasm(format!("{e:?}")))?;
-                module.section(&globals);
+            wasmparser::Payload::ExportSection(s) => {
+                let mut sec = wasm_encoder::ExportSection::new();
+                reencoder.parse_export_section(&mut sec, s).map_err(&enc_err)?;
+                module.section(&sec);
             }
-            wasmparser::Payload::ExportSection(section) => {
-                let mut exports = wasm_encoder::ExportSection::new();
-                reencoder
-                    .parse_export_section(&mut exports, section)
-                    .map_err(|e| VelaError::InvalidWasm(format!("{e:?}")))?;
-                module.section(&exports);
+            wasmparser::Payload::StartSection { func, .. } => {
+                module.section(&wasm_encoder::StartSection { function_index: func });
             }
-            wasmparser::Payload::StartSection { func, range: _ } => {
-                module.section(&wasm_encoder::StartSection {
-                    function_index: func,
-                });
+            wasmparser::Payload::ElementSection(s) => {
+                let mut sec = wasm_encoder::ElementSection::new();
+                reencoder.parse_element_section(&mut sec, s).map_err(&enc_err)?;
+                module.section(&sec);
             }
-            wasmparser::Payload::ElementSection(section) => {
-                let mut elements = wasm_encoder::ElementSection::new();
-                reencoder
-                    .parse_element_section(&mut elements, section)
-                    .map_err(|e| VelaError::InvalidWasm(format!("{e:?}")))?;
-                module.section(&elements);
-            }
-            wasmparser::Payload::DataCountSection { count, range: _ } => {
+            wasmparser::Payload::DataCountSection { count, .. } => {
                 module.section(&wasm_encoder::DataCountSection { count });
             }
-            wasmparser::Payload::DataSection(section) => {
-                let mut data = wasm_encoder::DataSection::new();
-                reencoder
-                    .parse_data_section(&mut data, section)
-                    .map_err(|e| VelaError::InvalidWasm(format!("{e:?}")))?;
-                module.section(&data);
+            wasmparser::Payload::DataSection(s) => {
+                let mut sec = wasm_encoder::DataSection::new();
+                reencoder.parse_data_section(&mut sec, s).map_err(&enc_err)?;
+                module.section(&sec);
             }
-            wasmparser::Payload::CustomSection(section) => {
-                reencoder
-                    .parse_custom_section(&mut module, section)
-                    .map_err(|e| VelaError::InvalidWasm(format!("{e:?}")))?;
+            wasmparser::Payload::CustomSection(s) => {
+                reencoder.parse_custom_section(&mut module, s).map_err(&enc_err)?;
             }
             wasmparser::Payload::End(_) => {}
-            _ => {
-                // Skip unknown/component sections
-            }
+            _ => {}
         }
     }
 
@@ -225,56 +188,9 @@ pub fn eliminate_dead_code(module_bytes: &[u8]) -> Result<Vec<u8>, VelaError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testutil::build_basic_module;
     use std::borrow::Cow;
     use wasm_encoder::*;
-
-    /// Build a module with 4 functions (no imports):
-    /// func 0: exported "entry", calls func 1
-    /// func 1: calls func 2
-    /// func 2: leaf
-    /// func 3: dead, calls func 2
-    fn build_basic_module() -> Vec<u8> {
-        let mut module = Module::new();
-
-        let mut types = TypeSection::new();
-        types.ty().function(vec![], vec![]);
-        module.section(&types);
-
-        let mut functions = FunctionSection::new();
-        functions.function(0);
-        functions.function(0);
-        functions.function(0);
-        functions.function(0);
-        module.section(&functions);
-
-        let mut exports = ExportSection::new();
-        exports.export("entry", ExportKind::Func, 0);
-        module.section(&exports);
-
-        let mut codes = CodeSection::new();
-
-        let mut f0 = Function::new(vec![]);
-        f0.instruction(&Instruction::Call(1));
-        f0.instruction(&Instruction::End);
-        codes.function(&f0);
-
-        let mut f1 = Function::new(vec![]);
-        f1.instruction(&Instruction::Call(2));
-        f1.instruction(&Instruction::End);
-        codes.function(&f1);
-
-        let mut f2 = Function::new(vec![]);
-        f2.instruction(&Instruction::End);
-        codes.function(&f2);
-
-        let mut f3 = Function::new(vec![]);
-        f3.instruction(&Instruction::Call(2));
-        f3.instruction(&Instruction::End);
-        codes.function(&f3);
-
-        module.section(&codes);
-        module.finish()
-    }
 
     /// Build a module with:
     /// func 0: start function, no calls
