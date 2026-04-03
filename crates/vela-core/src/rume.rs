@@ -76,7 +76,6 @@ pub fn analyze_usage(
             wasmparser::Payload::GlobalSection(reader) => {
                 for global in reader {
                     let global = global?;
-                    // Check init expr for global.get references
                     let mut init_reader = global.init_expr.get_operators_reader();
                     while !init_reader.eof() {
                         if let wasmparser::Operator::GlobalGet { global_index } = init_reader.read()? {

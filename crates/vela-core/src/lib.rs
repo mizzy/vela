@@ -67,27 +67,15 @@ fn optimize_module(module_bytes: &[u8], config: &OptimizeConfig) -> Result<Vec<u
     let counts = &usage.counts;
     debug_assert_eq!(graph.num_functions, counts.num_functions);
 
-    let mut table_removals = HashSet::new();
-    let mut memory_removals = HashSet::new();
-    let mut global_removals = HashSet::new();
-
-    if config.rume {
-        for i in 0..counts.num_tables {
-            if !usage.used_tables.contains(&i) {
-                table_removals.insert(i);
-            }
-        }
-        for i in 0..counts.num_memories {
-            if !usage.used_memories.contains(&i) {
-                memory_removals.insert(i);
-            }
-        }
-        for i in 0..counts.num_globals {
-            if !usage.used_globals.contains(&i) {
-                global_removals.insert(i);
-            }
-        }
-    }
+    let (table_removals, memory_removals, global_removals) = if config.rume {
+        (
+            (0..counts.num_tables).filter(|i| !usage.used_tables.contains(i)).collect(),
+            (0..counts.num_memories).filter(|i| !usage.used_memories.contains(i)).collect(),
+            (0..counts.num_globals).filter(|i| !usage.used_globals.contains(i)).collect(),
+        )
+    } else {
+        (HashSet::new(), HashSet::new(), HashSet::new())
+    };
 
     let removals = renumber::Removals {
         functions: func_removals,
@@ -101,9 +89,16 @@ fn optimize_module(module_bytes: &[u8], config: &OptimizeConfig) -> Result<Vec<u
     }
 
     let func_map = renumber::build_index_map(counts.num_functions, &redirects, &removals.functions);
-    let table_map = renumber::build_index_map(counts.num_tables, &HashMap::new(), &removals.tables);
-    let memory_map = renumber::build_index_map(counts.num_memories, &HashMap::new(), &removals.memories);
-    let global_map = renumber::build_index_map(counts.num_globals, &HashMap::new(), &removals.globals);
+
+    let table_map = if removals.tables.is_empty() { None } else {
+        Some(renumber::build_index_map(counts.num_tables, &HashMap::new(), &removals.tables))
+    };
+    let memory_map = if removals.memories.is_empty() { None } else {
+        Some(renumber::build_index_map(counts.num_memories, &HashMap::new(), &removals.memories))
+    };
+    let global_map = if removals.globals.is_empty() { None } else {
+        Some(renumber::build_index_map(counts.num_globals, &HashMap::new(), &removals.globals))
+    };
 
     let mut reencoder = renumber::ModuleRenumberer {
         function_map: func_map,

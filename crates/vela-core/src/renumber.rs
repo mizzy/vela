@@ -66,18 +66,18 @@ impl Removals {
 /// precomputed maps.
 pub struct ModuleRenumberer {
     pub function_map: Vec<u32>,
-    pub table_map: Vec<u32>,
-    pub memory_map: Vec<u32>,
-    pub global_map: Vec<u32>,
+    pub table_map: Option<Vec<u32>>,
+    pub memory_map: Option<Vec<u32>>,
+    pub global_map: Option<Vec<u32>>,
 }
 
 impl ModuleRenumberer {
     pub fn function_only(function_map: Vec<u32>) -> Self {
         Self {
             function_map,
-            table_map: Vec::new(),
-            memory_map: Vec::new(),
-            global_map: Vec::new(),
+            table_map: None,
+            memory_map: None,
+            global_map: None,
         }
     }
 }
@@ -90,26 +90,23 @@ impl Reencode for ModuleRenumberer {
     }
 
     fn table_index(&mut self, table: u32) -> Result<u32, Error<Self::Error>> {
-        if self.table_map.is_empty() {
-            Ok(table)
-        } else {
-            Ok(self.table_map[table as usize])
+        match &self.table_map {
+            Some(map) => Ok(map[table as usize]),
+            None => Ok(table),
         }
     }
 
     fn memory_index(&mut self, memory: u32) -> Result<u32, Error<Self::Error>> {
-        if self.memory_map.is_empty() {
-            Ok(memory)
-        } else {
-            Ok(self.memory_map[memory as usize])
+        match &self.memory_map {
+            Some(map) => Ok(map[memory as usize]),
+            None => Ok(memory),
         }
     }
 
     fn global_index(&mut self, global: u32) -> Result<u32, Error<Self::Error>> {
-        if self.global_map.is_empty() {
-            Ok(global)
-        } else {
-            Ok(self.global_map[global as usize])
+        match &self.global_map {
+            Some(map) => Ok(map[global as usize]),
+            None => Ok(global),
         }
     }
 }
@@ -579,9 +576,9 @@ mod tests {
 
         let mut reencoder = ModuleRenumberer {
             function_map,
-            table_map: Vec::new(),
-            memory_map: Vec::new(),
-            global_map,
+            table_map: None,
+            memory_map: None,
+            global_map: Some(global_map),
         };
 
         let counts = crate::rume::ModuleCounts {
@@ -677,9 +674,9 @@ mod tests {
         let global_map = build_index_map(2, &HashMap::new(), &removals.globals);
         let mut reencoder = ModuleRenumberer {
             function_map: func_map,
-            table_map: Vec::new(),
-            memory_map: Vec::new(),
-            global_map,
+            table_map: None,
+            memory_map: None,
+            global_map: Some(global_map),
         };
         let counts = crate::rume::ModuleCounts {
             num_functions: 1,
