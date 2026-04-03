@@ -1,2 +1,4 @@
 /target
 benches/fixtures/
+tests/target/
+tests/Cargo.lock
