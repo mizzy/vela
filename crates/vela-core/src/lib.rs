@@ -19,11 +19,13 @@ pub struct OptimizeConfig {
     pub dce: bool,
     /// Enable Duplicate Function Elimination.
     pub dfe: bool,
+    /// Enable Redundant/Unused Member Elimination (tables, memories, globals).
+    pub rume: bool,
 }
 
 impl Default for OptimizeConfig {
     fn default() -> Self {
-        Self { dce: true, dfe: true }
+        Self { dce: true, dfe: true, rume: true }
     }
 }
 
@@ -35,7 +37,7 @@ pub fn optimize(wasm: &[u8], config: &OptimizeConfig) -> Result<Vec<u8>, VelaErr
 }
 
 fn optimize_module(module_bytes: &[u8], config: &OptimizeConfig) -> Result<Vec<u8>, VelaError> {
-    if !config.dce && !config.dfe {
+    if !config.dce && !config.dfe && !config.rume {
         return Ok(module_bytes.to_vec());
     }
 
@@ -43,7 +45,8 @@ fn optimize_module(module_bytes: &[u8], config: &OptimizeConfig) -> Result<Vec<u
     let roots = dce::find_roots(module_bytes, &graph)?;
     let reachable = dce::find_reachable(&roots, &graph);
 
-    let mut removals: HashSet<u32> = if config.dce {
+    // DCE
+    let mut func_removals: HashSet<u32> = if config.dce {
         (0..graph.num_functions)
             .filter(|i| !reachable.contains(i))
             .collect()
@@ -51,31 +54,64 @@ fn optimize_module(module_bytes: &[u8], config: &OptimizeConfig) -> Result<Vec<u
         HashSet::new()
     };
 
+    // DFE
     let mut redirects: HashMap<u32, u32> = HashMap::new();
     if config.dfe {
         let dfe_result = dfe::find_duplicates(module_bytes, &reachable)?;
         redirects = dfe_result.redirects;
-        removals.extend(dfe_result.removals);
+        func_removals.extend(dfe_result.removals);
     }
+
+    // RUME: analyze usage to get counts and determine unused elements
+    let usage = rume::analyze_usage(module_bytes, &reachable)?;
+    let counts = &usage.counts;
+
+    let mut table_removals = HashSet::new();
+    let mut memory_removals = HashSet::new();
+    let mut global_removals = HashSet::new();
+
+    if config.rume {
+        for i in 0..counts.num_tables {
+            if !usage.used_tables.contains(&i) {
+                table_removals.insert(i);
+            }
+        }
+        for i in 0..counts.num_memories {
+            if !usage.used_memories.contains(&i) {
+                memory_removals.insert(i);
+            }
+        }
+        for i in 0..counts.num_globals {
+            if !usage.used_globals.contains(&i) {
+                global_removals.insert(i);
+            }
+        }
+    }
+
+    let removals = renumber::Removals {
+        functions: func_removals,
+        tables: table_removals,
+        memories: memory_removals,
+        globals: global_removals,
+    };
 
     if removals.is_empty() && redirects.is_empty() {
         return Ok(module_bytes.to_vec());
     }
 
-    let removals_set = renumber::Removals::functions_only(removals);
-    let index_map = renumber::build_index_map(graph.num_functions, &redirects, &removals_set.functions);
-    let mut reencoder = renumber::ModuleRenumberer::function_only(index_map);
-    let counts = crate::rume::ModuleCounts {
-        num_functions: graph.num_functions,
-        num_tables: 0,
-        num_memories: 0,
-        num_globals: 0,
-        num_func_imports: graph.num_imports,
-        num_table_imports: 0,
-        num_memory_imports: 0,
-        num_global_imports: 0,
+    let func_map = renumber::build_index_map(counts.num_functions, &redirects, &removals.functions);
+    let table_map = renumber::build_index_map(counts.num_tables, &HashMap::new(), &removals.tables);
+    let memory_map = renumber::build_index_map(counts.num_memories, &HashMap::new(), &removals.memories);
+    let global_map = renumber::build_index_map(counts.num_globals, &HashMap::new(), &removals.globals);
+
+    let mut reencoder = renumber::ModuleRenumberer {
+        function_map: func_map,
+        table_map,
+        memory_map,
+        global_map,
     };
-    renumber::rebuild_module(module_bytes, &mut reencoder, &removals_set, &counts)
+
+    renumber::rebuild_module(module_bytes, &mut reencoder, &removals, counts)
 }
 
 #[cfg(test)]
@@ -137,7 +173,7 @@ mod tests {
     #[test]
     fn optimize_reduces_component_size() {
         let original = build_component_with_dead_code();
-        let config = OptimizeConfig { dce: true, dfe: true };
+        let config = OptimizeConfig { dce: true, dfe: true, rume: true };
         let optimized = optimize(&original, &config).expect("optimize should succeed");
 
         assert!(
@@ -156,7 +192,7 @@ mod tests {
     #[test]
     fn optimize_with_all_disabled_passes_through() {
         let original = build_component_with_dead_code();
-        let config = OptimizeConfig { dce: false, dfe: false };
+        let config = OptimizeConfig { dce: false, dfe: false, rume: false };
         let result = optimize(&original, &config).expect("should succeed");
 
         let parser = wasmparser::Parser::new(0);
