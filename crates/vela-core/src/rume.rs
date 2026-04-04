@@ -1,6 +1,6 @@
 // crates/vela-core/src/rume.rs
-use std::collections::HashSet;
 use crate::error::VelaError;
+use std::collections::HashSet;
 
 /// Counts of each element kind in the module (imports + defined).
 pub struct ModuleCounts {
@@ -78,7 +78,9 @@ pub fn analyze_usage(
                     let global = global?;
                     let mut init_reader = global.init_expr.get_operators_reader();
                     while !init_reader.eof() {
-                        if let wasmparser::Operator::GlobalGet { global_index } = init_reader.read()? {
+                        if let wasmparser::Operator::GlobalGet { global_index } =
+                            init_reader.read()?
+                        {
                             used_globals.insert(global_index);
                         }
                     }
@@ -89,9 +91,15 @@ pub fn analyze_usage(
                 for export in reader {
                     let export = export?;
                     match export.kind {
-                        wasmparser::ExternalKind::Table => { used_tables.insert(export.index); }
-                        wasmparser::ExternalKind::Memory => { used_memories.insert(export.index); }
-                        wasmparser::ExternalKind::Global => { used_globals.insert(export.index); }
+                        wasmparser::ExternalKind::Table => {
+                            used_tables.insert(export.index);
+                        }
+                        wasmparser::ExternalKind::Memory => {
+                            used_memories.insert(export.index);
+                        }
+                        wasmparser::ExternalKind::Global => {
+                            used_globals.insert(export.index);
+                        }
                         _ => {}
                     }
                 }
@@ -134,7 +142,10 @@ pub fn analyze_usage(
                         | wasmparser::Operator::TableFill { table } => {
                             used_tables.insert(table);
                         }
-                        wasmparser::Operator::TableCopy { dst_table, src_table } => {
+                        wasmparser::Operator::TableCopy {
+                            dst_table,
+                            src_table,
+                        } => {
                             used_tables.insert(dst_table);
                             used_tables.insert(src_table);
                         }
@@ -229,11 +240,19 @@ mod tests {
 
         let mut globals = GlobalSection::new();
         globals.global(
-            wasm_encoder::GlobalType { val_type: ValType::I32, mutable: true, shared: false },
+            wasm_encoder::GlobalType {
+                val_type: ValType::I32,
+                mutable: true,
+                shared: false,
+            },
             &ConstExpr::i32_const(0),
         );
         globals.global(
-            wasm_encoder::GlobalType { val_type: ValType::I32, mutable: true, shared: false },
+            wasm_encoder::GlobalType {
+                val_type: ValType::I32,
+                mutable: true,
+                shared: false,
+            },
             &ConstExpr::i32_const(0),
         );
         module.section(&globals);
@@ -284,12 +303,22 @@ mod tests {
         module.section(&tables);
 
         let mut memories = MemorySection::new();
-        memories.memory(MemoryType { minimum: 1, maximum: None, memory64: false, shared: false, page_size_log2: None });
+        memories.memory(MemoryType {
+            minimum: 1,
+            maximum: None,
+            memory64: false,
+            shared: false,
+            page_size_log2: None,
+        });
         module.section(&memories);
 
         let mut globals = GlobalSection::new();
         globals.global(
-            wasm_encoder::GlobalType { val_type: ValType::I32, mutable: false, shared: false },
+            wasm_encoder::GlobalType {
+                val_type: ValType::I32,
+                mutable: false,
+                shared: false,
+            },
             &ConstExpr::i32_const(42),
         );
         module.section(&globals);
@@ -311,9 +340,18 @@ mod tests {
         let reachable = HashSet::from([0]);
         let info = analyze_usage(&wasm, &reachable).unwrap();
 
-        assert!(info.used_globals.contains(&0), "exported global should be used");
-        assert!(info.used_memories.contains(&0), "exported memory should be used");
-        assert!(!info.used_tables.contains(&0), "unexported/unreferenced table should be unused");
+        assert!(
+            info.used_globals.contains(&0),
+            "exported global should be used"
+        );
+        assert!(
+            info.used_memories.contains(&0),
+            "exported memory should be used"
+        );
+        assert!(
+            !info.used_tables.contains(&0),
+            "unexported/unreferenced table should be unused"
+        );
     }
 
     #[test]
@@ -335,7 +373,11 @@ mod tests {
 
         let mut globals = GlobalSection::new();
         globals.global(
-            wasm_encoder::GlobalType { val_type: ValType::I32, mutable: true, shared: false },
+            wasm_encoder::GlobalType {
+                val_type: ValType::I32,
+                mutable: true,
+                shared: false,
+            },
             &ConstExpr::i32_const(0),
         );
         module.section(&globals);
@@ -361,6 +403,9 @@ mod tests {
         let reachable = HashSet::from([0]);
         let info = analyze_usage(&wasm, &reachable).unwrap();
 
-        assert!(!info.used_globals.contains(&0), "global only used by dead func should be unused");
+        assert!(
+            !info.used_globals.contains(&0),
+            "global only used by dead func should be unused"
+        );
     }
 }

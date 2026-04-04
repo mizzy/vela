@@ -210,9 +210,7 @@ pub fn rebuild_module(
                 for (i, table) in reader.into_iter().enumerate() {
                     let idx = num_imports.num_table_imports + i as u32;
                     if !removals.tables.contains(&idx) {
-                        reencoder
-                            .parse_table(&mut sec, table?)
-                            .map_err(&enc_err)?;
+                        reencoder.parse_table(&mut sec, table?).map_err(&enc_err)?;
                     }
                 }
                 module.section(&sec);
@@ -242,9 +240,7 @@ pub fn rebuild_module(
             }
             wasmparser::Payload::TagSection(s) => {
                 let mut sec = wasm_encoder::TagSection::new();
-                reencoder
-                    .parse_tag_section(&mut sec, s)
-                    .map_err(&enc_err)?;
+                reencoder.parse_tag_section(&mut sec, s).map_err(&enc_err)?;
                 module.section(&sec);
             }
             wasmparser::Payload::ExportSection(s) => {
@@ -404,7 +400,10 @@ mod tests {
 
         // Verify 2 functions remain
         let graph = crate::callgraph::CallGraph::from_module(&rebuilt).expect("should parse");
-        assert_eq!(graph.num_functions, 2, "should have 2 functions after removal");
+        assert_eq!(
+            graph.num_functions, 2,
+            "should have 2 functions after removal"
+        );
 
         // Should be smaller than original
         assert!(
@@ -497,7 +496,10 @@ mod tests {
 
         // Verify 3 functions remain (0, 1, 3 -> renumbered to 0, 1, 2)
         let graph = crate::callgraph::CallGraph::from_module(&rebuilt).expect("should parse");
-        assert_eq!(graph.num_functions, 3, "should have 3 functions after removal");
+        assert_eq!(
+            graph.num_functions, 3,
+            "should have 3 functions after removal"
+        );
 
         // func 0 (was func 0) should call func 2 (was func 3, compacted)
         assert!(
@@ -637,12 +639,20 @@ mod tests {
         imports.import(
             "env",
             "used_g",
-            wasm_encoder::GlobalType { val_type: ValType::I32, mutable: false, shared: false },
+            wasm_encoder::GlobalType {
+                val_type: ValType::I32,
+                mutable: false,
+                shared: false,
+            },
         );
         imports.import(
             "env",
             "unused_g",
-            wasm_encoder::GlobalType { val_type: ValType::I32, mutable: false, shared: false },
+            wasm_encoder::GlobalType {
+                val_type: ValType::I32,
+                mutable: false,
+                shared: false,
+            },
         );
         module.section(&imports);
 
@@ -706,6 +716,9 @@ mod tests {
                 }
             }
         }
-        assert_eq!(import_count, 1, "should have 1 import after removing unused global import");
+        assert_eq!(
+            import_count, 1,
+            "should have 1 import after removing unused global import"
+        );
     }
 }

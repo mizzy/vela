@@ -26,7 +26,10 @@ mod tests {
         assert_eq!(e.to_string(), "invalid WASM: bad magic");
 
         let e = VelaError::NotComponent("expected component".into());
-        assert_eq!(e.to_string(), "not a Component Model WASM: expected component");
+        assert_eq!(
+            e.to_string(),
+            "not a Component Model WASM: expected component"
+        );
 
         let e = VelaError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "missing"));
         assert!(e.to_string().contains("missing"));

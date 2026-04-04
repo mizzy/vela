@@ -50,7 +50,15 @@ fn call_func(wasm: &[u8], name: &str) -> u32 {
 #[test]
 fn optimized_component_runs_in_wasmtime() {
     let original = build_test_component_wat();
-    let optimized = optimize(&original, &OptimizeConfig { dce: true, dfe: true, rume: true }).expect("optimize should succeed");
+    let optimized = optimize(
+        &original,
+        &OptimizeConfig {
+            dce: true,
+            dfe: true,
+            rume: true,
+        },
+    )
+    .expect("optimize should succeed");
 
     assert!(
         optimized.len() < original.len(),
@@ -65,7 +73,15 @@ fn optimized_component_runs_in_wasmtime() {
 #[test]
 fn pass_through_component_runs_in_wasmtime() {
     let original = build_test_component_wat();
-    let result = optimize(&original, &OptimizeConfig { dce: false, dfe: false, rume: false }).expect("pass-through should succeed");
+    let result = optimize(
+        &original,
+        &OptimizeConfig {
+            dce: false,
+            dfe: false,
+            rume: false,
+        },
+    )
+    .expect("pass-through should succeed");
     assert_eq!(call_func(&result, "answer"), 42);
 }
 
@@ -100,8 +116,15 @@ fn build_component_with_duplicates_wat() -> Vec<u8> {
 #[test]
 fn dfe_merges_duplicates_and_runs_correctly() {
     let original = build_component_with_duplicates_wat();
-    let optimized = optimize(&original, &OptimizeConfig { dce: true, dfe: true, rume: true })
-        .expect("optimize should succeed");
+    let optimized = optimize(
+        &original,
+        &OptimizeConfig {
+            dce: true,
+            dfe: true,
+            rume: true,
+        },
+    )
+    .expect("optimize should succeed");
 
     assert!(optimized.len() < original.len());
 
@@ -143,7 +166,11 @@ fn rume_removes_unused_global_and_runs() {
     let original = build_component_with_unused_global_wat();
     let optimized = optimize(
         &original,
-        &OptimizeConfig { dce: true, dfe: true, rume: true },
+        &OptimizeConfig {
+            dce: true,
+            dfe: true,
+            rume: true,
+        },
     )
     .expect("optimize should succeed");
 

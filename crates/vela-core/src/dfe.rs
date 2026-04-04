@@ -1,6 +1,6 @@
 // crates/vela-core/src/dfe.rs
-use std::collections::{HashMap, HashSet};
 use crate::error::VelaError;
+use std::collections::{HashMap, HashSet};
 
 pub struct DfeResult {
     pub redirects: HashMap<u32, u32>,
@@ -79,15 +79,18 @@ pub fn find_duplicates(
         }
     }
 
-    Ok(DfeResult { redirects, removals })
+    Ok(DfeResult {
+        redirects,
+        removals,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutil::build_module_with_duplicates;
     use crate::callgraph::CallGraph;
-    use crate::dce::{find_roots, find_reachable};
+    use crate::dce::{find_reachable, find_roots};
+    use crate::testutil::build_module_with_duplicates;
 
     #[test]
     fn detects_duplicate_functions() {
@@ -158,6 +161,9 @@ mod tests {
         let reachable = find_reachable(&roots, &graph);
 
         let result = find_duplicates(&wasm, &reachable).unwrap();
-        assert!(result.redirects.is_empty(), "different types should not be duplicates");
+        assert!(
+            result.redirects.is_empty(),
+            "different types should not be duplicates"
+        );
     }
 }

@@ -58,7 +58,7 @@ pub fn build_module_with_duplicates() -> Vec<u8> {
     let mut module = Module::new();
 
     let mut types = TypeSection::new();
-    types.ty().function(vec![], vec![]);         // type 0: () -> ()
+    types.ty().function(vec![], vec![]); // type 0: () -> ()
     types.ty().function(vec![], vec![ValType::I32]); // type 1: () -> i32
     module.section(&types);
 

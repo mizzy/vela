@@ -25,15 +25,17 @@ pub struct OptimizeConfig {
 
 impl Default for OptimizeConfig {
     fn default() -> Self {
-        Self { dce: true, dfe: true, rume: true }
+        Self {
+            dce: true,
+            dfe: true,
+            rume: true,
+        }
     }
 }
 
 /// Optimize a Component Model WASM binary.
 pub fn optimize(wasm: &[u8], config: &OptimizeConfig) -> Result<Vec<u8>, VelaError> {
-    component::process_component(wasm, |module_bytes| {
-        optimize_module(module_bytes, config)
-    })
+    component::process_component(wasm, |module_bytes| optimize_module(module_bytes, config))
 }
 
 fn optimize_module(module_bytes: &[u8], config: &OptimizeConfig) -> Result<Vec<u8>, VelaError> {
@@ -69,9 +71,15 @@ fn optimize_module(module_bytes: &[u8], config: &OptimizeConfig) -> Result<Vec<u
 
     let (table_removals, memory_removals, global_removals) = if config.rume {
         (
-            (0..counts.num_tables).filter(|i| !usage.used_tables.contains(i)).collect(),
-            (0..counts.num_memories).filter(|i| !usage.used_memories.contains(i)).collect(),
-            (0..counts.num_globals).filter(|i| !usage.used_globals.contains(i)).collect(),
+            (0..counts.num_tables)
+                .filter(|i| !usage.used_tables.contains(i))
+                .collect(),
+            (0..counts.num_memories)
+                .filter(|i| !usage.used_memories.contains(i))
+                .collect(),
+            (0..counts.num_globals)
+                .filter(|i| !usage.used_globals.contains(i))
+                .collect(),
         )
     } else {
         (HashSet::new(), HashSet::new(), HashSet::new())
@@ -90,14 +98,32 @@ fn optimize_module(module_bytes: &[u8], config: &OptimizeConfig) -> Result<Vec<u
 
     let func_map = renumber::build_index_map(counts.num_functions, &redirects, &removals.functions);
 
-    let table_map = if removals.tables.is_empty() { None } else {
-        Some(renumber::build_index_map(counts.num_tables, &HashMap::new(), &removals.tables))
+    let table_map = if removals.tables.is_empty() {
+        None
+    } else {
+        Some(renumber::build_index_map(
+            counts.num_tables,
+            &HashMap::new(),
+            &removals.tables,
+        ))
     };
-    let memory_map = if removals.memories.is_empty() { None } else {
-        Some(renumber::build_index_map(counts.num_memories, &HashMap::new(), &removals.memories))
+    let memory_map = if removals.memories.is_empty() {
+        None
+    } else {
+        Some(renumber::build_index_map(
+            counts.num_memories,
+            &HashMap::new(),
+            &removals.memories,
+        ))
     };
-    let global_map = if removals.globals.is_empty() { None } else {
-        Some(renumber::build_index_map(counts.num_globals, &HashMap::new(), &removals.globals))
+    let global_map = if removals.globals.is_empty() {
+        None
+    } else {
+        Some(renumber::build_index_map(
+            counts.num_globals,
+            &HashMap::new(),
+            &removals.globals,
+        ))
     };
 
     let mut reencoder = renumber::ModuleRenumberer {
@@ -122,7 +148,9 @@ mod tests {
         let mut module = Module::new();
 
         let mut types = TypeSection::new();
-        types.ty().function(vec![], vec![wasm_encoder::ValType::I32]);
+        types
+            .ty()
+            .function(vec![], vec![wasm_encoder::ValType::I32]);
         types.ty().function(vec![], vec![]);
         module.section(&types);
 
@@ -169,7 +197,11 @@ mod tests {
     #[test]
     fn optimize_reduces_component_size() {
         let original = build_component_with_dead_code();
-        let config = OptimizeConfig { dce: true, dfe: true, rume: true };
+        let config = OptimizeConfig {
+            dce: true,
+            dfe: true,
+            rume: true,
+        };
         let optimized = optimize(&original, &config).expect("optimize should succeed");
 
         assert!(
@@ -188,7 +220,11 @@ mod tests {
     #[test]
     fn optimize_with_all_disabled_passes_through() {
         let original = build_component_with_dead_code();
-        let config = OptimizeConfig { dce: false, dfe: false, rume: false };
+        let config = OptimizeConfig {
+            dce: false,
+            dfe: false,
+            rume: false,
+        };
         let result = optimize(&original, &config).expect("should succeed");
 
         let parser = wasmparser::Parser::new(0);

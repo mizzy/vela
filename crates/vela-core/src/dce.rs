@@ -1,7 +1,7 @@
 // crates/vela-core/src/dce.rs
-use std::collections::{HashMap, HashSet};
 use crate::callgraph::CallGraph;
 use crate::error::VelaError;
+use std::collections::{HashMap, HashSet};
 
 pub fn find_roots(module_bytes: &[u8], graph: &CallGraph) -> Result<HashSet<u32>, VelaError> {
     let parser = wasmparser::Parser::new(0);
@@ -215,7 +215,10 @@ mod tests {
         // func 0 is the start function
         assert!(roots.contains(&0), "start func 0 should be a root");
         // func 1 is referenced in the elem section
-        assert!(roots.contains(&1), "elem-referenced func 1 should be a root");
+        assert!(
+            roots.contains(&1),
+            "elem-referenced func 1 should be a root"
+        );
         // func 2 is dead
         assert!(!roots.contains(&2), "dead func 2 should not be a root");
     }
@@ -225,11 +228,16 @@ mod tests {
         let wasm = build_basic_module();
         let optimized = eliminate_dead_functions(&wasm).expect("should optimize");
 
-        wasmparser::Validator::new().validate_all(&optimized).expect("optimized module should be valid");
+        wasmparser::Validator::new()
+            .validate_all(&optimized)
+            .expect("optimized module should be valid");
 
         // Dead func 3 should be fully removed — only 3 functions remain
         let graph = CallGraph::from_module(&optimized).expect("should parse optimized module");
-        assert_eq!(graph.num_functions, 3, "dead function should be fully removed");
+        assert_eq!(
+            graph.num_functions, 3,
+            "dead function should be fully removed"
+        );
 
         assert!(optimized.len() < wasm.len(), "optimized should be smaller");
     }
@@ -268,10 +276,15 @@ mod tests {
 
         let optimized = eliminate_dead_functions(&wasm).expect("should optimize");
 
-        wasmparser::Validator::new().validate_all(&optimized).expect("should be valid");
+        wasmparser::Validator::new()
+            .validate_all(&optimized)
+            .expect("should be valid");
 
         let graph = CallGraph::from_module(&optimized).unwrap();
-        assert_eq!(graph.num_functions, 1, "only exported function should remain");
+        assert_eq!(
+            graph.num_functions, 1,
+            "only exported function should remain"
+        );
 
         let parser = wasmparser::Parser::new(0);
         let mut found_42 = false;
@@ -285,6 +298,9 @@ mod tests {
                 }
             }
         }
-        assert!(found_42, "func 0 should still contain i32.const 42 after DCE");
+        assert!(
+            found_42,
+            "func 0 should still contain i32.const 42 after DCE"
+        );
     }
 }

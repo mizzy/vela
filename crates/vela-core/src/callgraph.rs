@@ -1,6 +1,6 @@
 // crates/vela-core/src/callgraph.rs
-use std::collections::{HashMap, HashSet};
 use crate::error::VelaError;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]
 pub struct CallGraph {

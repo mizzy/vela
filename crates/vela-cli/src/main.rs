@@ -42,11 +42,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Optimize { input, output, no_dce, no_dfe, no_rume } => {
+        Commands::Optimize {
+            input,
+            output,
+            no_dce,
+            no_dfe,
+            no_rume,
+        } => {
             let wasm = std::fs::read(&input)?;
             let input_size = wasm.len();
 
-            let config = vela_core::OptimizeConfig { dce: !no_dce, dfe: !no_dfe, rume: !no_rume };
+            let config = vela_core::OptimizeConfig {
+                dce: !no_dce,
+                dfe: !no_dfe,
+                rume: !no_rume,
+            };
 
             let start = std::time::Instant::now();
             let optimized = vela_core::optimize(&wasm, &config)?;
@@ -130,7 +140,11 @@ fn print_info(wasm: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("Core modules: {}", module_count);
-    println!("Functions: {} ({} imported)", total_functions + total_imports, total_imports);
+    println!(
+        "Functions: {} ({} imported)",
+        total_functions + total_imports,
+        total_imports
+    );
 
     Ok(())
 }

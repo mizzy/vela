@@ -1,7 +1,7 @@
 // crates/vela-core/src/component.rs
 use crate::error::VelaError;
-use wasmparser::{Encoding, Parser, Payload};
 use wasm_encoder::{Component, ComponentSectionId, RawSection};
+use wasmparser::{Encoding, Parser, Payload};
 
 /// Parse a Component Model WASM and reconstruct it, applying `process_module`
 /// to each core module's bytes. For pass-through, `process_module` returns the
@@ -15,7 +15,10 @@ pub fn process_component(
     let mut payloads = parser.parse_all(wasm);
 
     match payloads.next() {
-        Some(Ok(Payload::Version { encoding, .. })) if encoding == Encoding::Component => {}
+        Some(Ok(Payload::Version {
+            encoding: Encoding::Component,
+            ..
+        })) => {}
         _ => {
             return Err(VelaError::NotComponent(
                 "input is not a Component Model WASM".into(),
@@ -34,7 +37,10 @@ pub fn process_component(
     for payload in payloads {
         let payload = payload?;
         match &payload {
-            Payload::ModuleSection { parser: _, unchecked_range } => {
+            Payload::ModuleSection {
+                parser: _,
+                unchecked_range,
+            } => {
                 if nested_depth == 0 {
                     let raw = &wasm[unchecked_range.start..unchecked_range.end];
                     let processed = process_module(raw)?;
@@ -42,7 +48,9 @@ pub fn process_component(
                 }
                 nested_depth += 1;
             }
-            Payload::ComponentSection { unchecked_range, .. } => {
+            Payload::ComponentSection {
+                unchecked_range, ..
+            } => {
                 if nested_depth == 0 {
                     // Save the range of the nested component to emit as raw bytes
                     nested_component_range = Some(unchecked_range.start..unchecked_range.end);
@@ -98,7 +106,9 @@ mod tests {
         let mut module = Module::new();
 
         let mut types = TypeSection::new();
-        types.ty().function(vec![], vec![wasm_encoder::ValType::I32]);
+        types
+            .ty()
+            .function(vec![], vec![wasm_encoder::ValType::I32]);
         module.section(&types);
 
         let mut functions = FunctionSection::new();
