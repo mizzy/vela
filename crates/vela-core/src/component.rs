@@ -23,30 +23,45 @@ pub fn process_component(
         }
     }
 
-    // Re-encode the component, replacing core modules with processed versions
+    // Re-encode the component, replacing core modules with processed versions.
+    // Nested components and modules are tracked by depth so their internal
+    // payloads are not accidentally flattened into the top-level component.
     let mut component = Component::new();
-    let mut module_depth: u32 = 0;
+    let mut nested_depth: u32 = 0;
     let mut module_bytes: Option<Vec<u8>> = None;
+    let mut nested_component_range: Option<std::ops::Range<usize>> = None;
 
     for payload in payloads {
         let payload = payload?;
         match &payload {
             Payload::ModuleSection { parser: _, unchecked_range } => {
-                if module_depth == 0 {
+                if nested_depth == 0 {
                     let raw = &wasm[unchecked_range.start..unchecked_range.end];
                     let processed = process_module(raw)?;
                     module_bytes = Some(processed);
                 }
-                module_depth += 1;
+                nested_depth += 1;
+            }
+            Payload::ComponentSection { unchecked_range, .. } => {
+                if nested_depth == 0 {
+                    // Save the range of the nested component to emit as raw bytes
+                    nested_component_range = Some(unchecked_range.start..unchecked_range.end);
+                }
+                nested_depth += 1;
             }
             Payload::End { .. } => {
-                if module_depth > 0 {
-                    module_depth -= 1;
-                    if module_depth == 0 {
+                if nested_depth > 0 {
+                    nested_depth -= 1;
+                    if nested_depth == 0 {
                         if let Some(bytes) = module_bytes.take() {
                             component.section(&RawSection {
                                 id: ComponentSectionId::CoreModule.into(),
                                 data: &bytes,
+                            });
+                        } else if let Some(range) = nested_component_range.take() {
+                            component.section(&RawSection {
+                                id: ComponentSectionId::Component.into(),
+                                data: &wasm[range],
                             });
                         }
                         continue;
@@ -56,7 +71,7 @@ pub fn process_component(
             _ => {}
         }
 
-        if module_depth > 0 {
+        if nested_depth > 0 {
             continue;
         }
 
