@@ -1,6 +1,6 @@
 # Vela
 
-WASM Component Model optimizer for [Carina](https://github.com/carina-rs/carina) provider plugins.
+WASM Component Model optimizer.
 
 Reduces binary size through three optimization passes:
 
